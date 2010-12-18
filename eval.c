@@ -1,6 +1,12 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
 
+/* TODO: better error messages 
+         redesign expr interface to car/cdr
+         make data structures lighter
+         car/cdr lists - e.g. '(1 2 3)
+         */
+
 #define _GNU_SOURCE
 #include "skm.h"
 #include <ctype.h>
@@ -16,6 +22,7 @@ typedef struct {
 int eval(Env *env, Expr *expr, void **result);
 int apply(Lambda *op, List *operands, void **result);
 Bind *lookup(Env *env, char *symbol);
+Env *env_setup_call(Lambda *op, List *operands);
 
 /* primitives */
 static void init_primitives(Env *env);
@@ -135,6 +142,7 @@ int eval(Env *env, Expr *expr, void **result) {
 				return RETVAL_ERROR;
 			retval = apply(proc, operands, result);
 			/* cleanup */
+                        lambda_cleanup(proc);
 			listtraverse(operands, op_free_helper);
 			listfree(operands);
 			return retval;
@@ -144,17 +152,17 @@ int eval(Env *env, Expr *expr, void **result) {
 }
 
 /* Return non-zero if the Expression is not a list */
-inline int isatom(Expr *expr) {
+int isatom(Expr *expr) {
 	return expr_isword(expr);
 }
 
 /* Return non-zero if the Expression is an empty list */
-inline int isemptylist(Expr *expr) {
+int isemptylist(Expr *expr) {
 	return expr_isemptylist(expr);
 }
 
 /* Return non-zero if the Expression is a non-empty list */
-inline int islist(Expr *expr) {
+int islist(Expr *expr) {
 	return expr_islist(expr);
 }
 
@@ -196,6 +204,8 @@ int isdefine(Expr *expr) {
 	if (expr_len(expr) != 3)
 		return 0;
 	/* check the first word of the expression tree */
+        if (!isatom(expr_subexpr(expr)))
+                return 0;
 	return (!strcmp(expr_getword(expr_subexpr(expr)), "define"));
 }
 
@@ -206,6 +216,8 @@ int islambda(Expr *expr) {
 	/* must consist of at least 3 symbols */
 	if (expr_len(expr) != 3)
 		return 0;
+        if (!isatom(expr_subexpr(expr)))
+                return 0;
 	return (!strcmp(expr_getword(expr_subexpr(expr)), "lambda"));
 }
 
@@ -315,7 +327,9 @@ int eval_define(Env *env, Expr *expr, void **result) {
 /* FINISH */
 int apply(Lambda *op, List *operands, void **result) {
 	Node *p;
+        Env *env;
 	float f = 0;
+
 	if (isprim(op)) {
 		/* perform addition */
 		if (!strcmp(prim_get(op), "+")) {
@@ -327,12 +341,58 @@ int apply(Lambda *op, List *operands, void **result) {
 			return RETVAL_ERROR;
 		}
 	} else {
-		/* apply non-primitive here */
-		return RETVAL_ERROR;
+                env = env_setup_call(op, operands);
+                if (env == NULL)
+                        return RETVAL_ERROR;
+                return eval(env, op->body, result);
 	}
-	/* remove lambda if we didn't bind it immediately */
-        lambda_cleanup(op);
 	return RETVAL_ERROR;
+}
+
+/* set up a lambda call, return pointer to the prepared environment */
+Env *env_setup_call(Lambda *op, List *operands) {
+        /* bind each operand to a new frame */
+        /* extend this frame to the lambda environment */
+        Env *env;
+        Frame *f;
+        Bind *bind;
+        Expr *param;
+        /* for iterating through operands list */
+        Node *p;
+        Operand *opand;
+
+        if (op == NULL || operands == NULL)
+                return NULL;
+        /* check for mis matching number of operands */
+        if (expr_len(op->param) != listsize(operands))
+                return NULL;
+        f = frame_new();
+        if (f == NULL)
+                return NULL;
+        env = env_extend(op->env, f);
+        if (env == NULL) {
+                frame_free(f);
+                return NULL;
+        }
+        /* go through each parameter and bind an operand to it */
+        p = listfirst(operands);
+        for (param = expr_subexpr(op->param); param; param = expr_next(param)) {
+                if (p == NULL)
+                        break;
+                opand = (Operand *)p->data;
+                bind = bind_new(expr_getword(param), opand->value, opand->type);
+                if (bind == NULL)
+                        break;
+                if (bind_add(env, bind) == NULL)
+                        break;
+                p = p->next;
+        }
+        if (param != NULL) {
+                frame_free(f);
+                return NULL;
+        }
+        env_print(op->env);
+        return env;
 }
 
 /* Get operator of an expression, which will
@@ -342,10 +402,8 @@ Lambda *get_operator(Env *env, Expr *expr) {
 	int retval;
 
 	retval = eval(env, expr_subexpr(expr), &proc);
-	if (retval != RETVAL_LAMBDA) {
-		fprintf(stderr, "get_operator(): did not find a lambda\n");
+	if (retval != RETVAL_LAMBDA)
 		return NULL;
-	}
 	return (Lambda *)proc;
 }
 
@@ -391,14 +449,12 @@ Operand *op_new(void *value, int type) {
 	op = malloc(sizeof(Operand));
 	if (op == NULL)
 		return NULL;
-
 	op->value = value;
 	op->type = type;
-
 	return op;
 }
 
-inline static void op_free_helper(void *data) {
+static void op_free_helper(void *data) {
 	op_free((Operand *)data);
 }
 
@@ -410,6 +466,6 @@ void op_free(Operand *op) {
 	free(op);
 }
 
-inline Bind *lookup(Env *env, char *symbol) {
+Bind *lookup(Env *env, char *symbol) {
         return env_search(env, symbol);
 }

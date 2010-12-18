@@ -145,7 +145,7 @@ Expr *expr_subexpr(Expr *parent) {
 		return NULL;
 	/* if the expression is just a single word
 	 * return null */
-	if (treeisleaf(parent))
+	if (expr_isword(parent))
 		return NULL;
 	return treefirstchild(parent);
 }
@@ -184,6 +184,8 @@ char *expr_getword(Expr *expr) {
 int expr_len(Expr *expr) {
 	if (expr == NULL)
 		return -1;
+        if (expr_isword(expr))
+                return -1;
 	return listsize(expr->children);
 }
 
@@ -193,6 +195,8 @@ Expr *expr_copy(Expr *orig) {
 
 	if (orig == NULL)
 		return NULL;
+        if (expr_isword(orig))
+                return treenew(strdup((char *)orig->data));
 	if ((clone = treenew(NULL)) == NULL)
 		return NULL;
 	if (expr_copy_helper(orig, clone) < 0) {
