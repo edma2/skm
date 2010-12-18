@@ -58,9 +58,10 @@ Bind *env_search(Env *env, char *symbol);
 Bind *frame_search(Frame *f, char *symbol);
 int bind_match(void *bind, void *symbol);
 
-void env_cleanup_all(Env *env);
-void env_cleanup(Env *env);
-void lambda_cleanup(Lambda *b);
+/* garbage collection */
+void env_sweep_frames(Env *env);
+void env_sweep_lambdas(Env *env);
+void lambda_check_remove(Lambda *b);
 
 void env_print(Env *env);
 void frame_print(Env *env);

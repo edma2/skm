@@ -3,8 +3,9 @@
 
 #include "skm.h"
 
-static void env_cleanup_helper(Env *env);
-static void env_cleanup_all_helper(Env *env);
+static void env_sweep_frames_helper(Env *env);
+static void env_sweep_lambdas_helper(Env *env);
+static void bind_reset(Env *env, char *symbol);
 static void bind_free_helper(void *data);
 static void bind_print_helper(void *data);
 static int lambda_isbound(Lambda *b);
@@ -19,7 +20,7 @@ Env *env_new(void) {
 
 /* return 1 if this environment has no parent */
 int env_isglobal(Env *env) {
-	return (env_parent(env) == NULL) ? 1 : 0;
+	return env_parent(env) == NULL;
 }
 
 /* extend environment with frame */
@@ -27,17 +28,6 @@ Env *env_extend(Env *env, Frame *f) {
 	if (f == NULL)
 		return NULL;
 	return treeaddchild(env, f);
-}
-
-/* free everything when we exit */
-void env_cleanup_all(Env *env) {
-	treetraverse(env, env_cleanup_all_helper);
-	treefree(env);
-}
-
-/* tree traversal helper function */
-static void env_cleanup_all_helper(Env *env) {
-	frame_free(env_frame(env));
 }
 
 /* return parent environment */
@@ -59,13 +49,8 @@ Bind *env_search(Env *env, char *symbol) {
 	return NULL;
 }
 
-/* free all frames without save marker */
-void env_cleanup(Env *env) {
-	treetraverse(env, env_cleanup_helper);
-}
-
 /* free a lambda if unbound */
-void lambda_cleanup(Lambda *b) {
+void lambda_check_remove(Lambda *b) {
         if (b == NULL)
                 return;
         if (lambda_isbound(b) == UNBOUND_LAMBDA)
@@ -106,8 +91,48 @@ void bind_print(Bind *bind) {
 	}
 }
 
+/* set every binding to an arbitrary string: this
+   removes all lambdas and frames */
+void env_sweep_lambdas(Env *env) {
+        treetraverse(env, env_sweep_lambdas_helper);
+}
+
 /* tree traversal helper function */
-static void env_cleanup_helper(Env *env) {
+static void env_sweep_lambdas_helper(Env *env) {
+        Node *p;
+        Frame *f = env_frame(env);
+        List *garbage = listnew();
+
+        /* collect all the lambda symbols */
+        for (p = listfirst(f->bindings); p; p = p->next) {
+                if (((Bind *)p->data)->type == RETVAL_LAMBDA)
+                        listappend(garbage, (char *)((Bind *)p->data)->symbol);
+        }
+        /* for each symbol make a meaningless binding 
+           freeing lambdas in the process */
+        for (p = listfirst(garbage); p; p = p->next)
+                bind_reset(env, (char *)p->data);
+        listfree(garbage);
+}
+
+/* the intent of this function is to 
+   free lambdas that are present in the environment */
+static void bind_reset(Env *env, char *symbol) {
+        Bind *zero;
+
+        zero = bind_new(symbol, "0", RETVAL_LITERAL);
+        if (zero == NULL)
+                return;
+        bind_add(env, zero);
+}
+
+/* free all frames without save marker */
+void env_sweep_frames(Env *env) {
+	treetraverse(env, env_sweep_frames_helper);
+}
+
+/* tree traversal helper function */
+static void env_sweep_frames_helper(Env *env) {
 	/* don't free the global environment either */
 	if (env_isglobal(env))
 		return;
@@ -117,6 +142,47 @@ static void env_cleanup_helper(Env *env) {
 		return;
 	frame_free(env_frame(env));
 	treeremove(env);
+}
+
+void frame_free(Frame *f) {
+	if (f == NULL)
+		return;
+	/* free all bindings */
+	listtraverse(f->bindings, bind_free_helper);
+	listfree(f->bindings);
+	free(f);
+}
+
+/* Remove a bind and check both lambda and frame 
+ * for garbage collection by modifying and examining
+ * the count */
+void bind_free(Bind *bind) {
+	Lambda *b;
+
+	if (bind == NULL)
+		return;
+	if (bind->type == RETVAL_LAMBDA) {
+		/* if we try to free a binding whose
+		 * value points to a lambda we should 
+		 * either decrease the count of the lambda
+		 * or free it if this count becomes 0 */
+		b = (Lambda *)bind->value;
+		b->bind_count--;
+                env_frame(b->env)->lambda_count--;
+		if (lambda_isbound(b) == UNBOUND_LAMBDA)
+			lambda_free(b);
+	} else {
+		/* free the allocated string in memory */
+		free(bind->value);
+	}
+	free(bind);
+}
+
+/* List traversal helper function */
+static void bind_free_helper(void *data) {
+	/* cast the void pointer
+	 * to a Bind pointer */
+	bind_free((Bind *)data);
 }
 
 Frame *frame_new(void) {
@@ -141,7 +207,6 @@ Bind *frame_search(Frame *f, char *symbol) {
 	Node *ptr = listsearch(f->bindings, symbol, bind_match);
 	return (ptr) ? (Bind *)ptr->data : NULL;
 }
-
 
 int bind_match(void *bind, void *symbol) {
 	if (bind == NULL || symbol == NULL)
@@ -217,50 +282,6 @@ Bind *bind_new(char *symbol, void *value, int type) {
 	bind->value = value;
 	bind->type = type;
 	return bind;
-}
-
-/* Remove a bind and check both lambda and frame 
- * for garbage collection by modifying and examining
- * the count */
-void bind_free(Bind *bind) {
-	Lambda *b;
-
-	if (bind == NULL)
-		return;
-	if (bind->type == RETVAL_LAMBDA) {
-		/* if we try to free a binding whose
-		 * value points to a lambda we should 
-		 * either decrease the count of the lambda
-		 * or free it if this count becomes 0 */
-		b = (Lambda *)bind->value;
-		b->bind_count--;
-		if (lambda_isbound(b) == UNBOUND_LAMBDA) {
-			/* we should also decrease the lambda 
-			 * of the associated frame */
-			env_frame(b->env)->lambda_count--;
-			lambda_free(b);
-		}
-	} else {
-		/* free the allocated string in memory */
-		free(bind->value);
-	}
-	free(bind);
-}
-
-/* List traversal helper function */
-static void bind_free_helper(void *data) {
-	/* cast the void pointer
-	 * to a Bind pointer */
-	bind_free((Bind *)data);
-}
-
-void frame_free(Frame *f) {
-	if (f == NULL)
-		return;
-	/* free all bindings */
-	listtraverse(f->bindings, bind_free_helper);
-	listfree(f->bindings);
-	free(f);
 }
 
 /* Create a new lambda given its parameters and body

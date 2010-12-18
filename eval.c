@@ -23,6 +23,7 @@ int eval(Env *env, Expr *expr, void **result);
 int apply(Lambda *op, List *operands, void **result);
 Bind *lookup(Env *env, char *symbol);
 Env *env_setup_call(Lambda *op, List *operands);
+void cleanup(Env *env);
 
 /* primitives */
 static void init_primitives(Env *env);
@@ -84,7 +85,7 @@ int main(void) {
 			b = (Lambda *)result;
 			lambda_print(b);
 			/* remove lambda if we didn't bind it immediately */
-                        lambda_cleanup(b);
+                        lambda_check_remove(b);
 		} else if (retval == RETVAL_ERROR) {
 			printf("not supported yet\n");
 		}
@@ -92,9 +93,9 @@ int main(void) {
 		if (retval != RETVAL_LAMBDA && retval != RETVAL_ERROR)
 			free(result);
 		expr_free(expr);
-		env_cleanup(global);
+		env_sweep_frames(global);
 	}
-	env_cleanup_all(global);
+        cleanup(global);
 	return 0;
 }
 
@@ -142,7 +143,7 @@ int eval(Env *env, Expr *expr, void **result) {
 				return RETVAL_ERROR;
 			retval = apply(proc, operands, result);
 			/* cleanup */
-                        lambda_cleanup(proc);
+                        lambda_check_remove(proc);
 			listtraverse(operands, op_free_helper);
 			listfree(operands);
 			return retval;
@@ -282,11 +283,6 @@ int eval_lambda(Env *env, Expr *expr, void **result) {
 	Expr *body;
 	Lambda *lambda;
 
-	if (expr == NULL)
-		return RETVAL_ERROR;
-	/* check for correct format */
-	if (expr_len(expr) != 3)
-		return RETVAL_ERROR;
 	/* extract parameters and body */
 	param = expr_next(expr_subexpr(expr));
 	body = expr_next(expr_next(expr_subexpr(expr)));
@@ -391,7 +387,6 @@ Env *env_setup_call(Lambda *op, List *operands) {
                 frame_free(f);
                 return NULL;
         }
-        env_print(op->env);
         return env;
 }
 
@@ -460,7 +455,7 @@ static void op_free_helper(void *data) {
 
 void op_free(Operand *op) {
 	if (op->type == RETVAL_LAMBDA)
-                lambda_cleanup((Lambda *)op->value);
+                lambda_check_remove((Lambda *)op->value);
 	else
 		free(op->value);
 	free(op);
@@ -468,4 +463,14 @@ void op_free(Operand *op) {
 
 Bind *lookup(Env *env, char *symbol) {
         return env_search(env, symbol);
+}
+
+void cleanup(Env *global) {
+        /* frees all lambdas */
+        env_sweep_lambdas(global);
+        /* frees all frames */
+        env_sweep_frames(global);
+        /* get rid of global frame/environment */
+        frame_free(env_frame(global));
+	treeremove(global);
 }
