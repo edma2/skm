@@ -29,6 +29,7 @@ void cleanup(Env *env);
 static void init_primitives(Env *env);
 static void prim_add(Env *env, char *ident);
 static char *prim_get(Lambda *proc);
+int apply_primitive(Lambda *prim, List *operands, void **result);
 
 /* special forms */
 int eval_lambda(Env *env, Expr *expr, void **result);
@@ -42,14 +43,14 @@ void op_free(Operand *op);
 static void op_free_helper(void *data);
 
 /* determine expression type */
-int isatom(Expr *expr);
-int islist(Expr *expr);
-int isemptylist(Expr *expr);
-int isnum(char *atom);
-int isquoted(char *atom);
-int isdefine(Expr *expr);
-int islambda(Expr *expr);
-int isprim(Lambda *b);
+int is_atom(Expr *expr);
+int is_list(Expr *expr);
+int is_emptylist(Expr *expr);
+int is_num(char *atom);
+int is_quoted(char *atom);
+int is_define(Expr *expr);
+int is_lambda(Expr *expr);
+int is_prim(Lambda *b);
 
 int main(void) {
 	Env *global;
@@ -63,9 +64,10 @@ int main(void) {
 	if (global == NULL)
 		return -1;
 	init_primitives(global);
+        printf("Welcome to skm>\n");
+        printf("Press ctrl-d to quit\n");
 	while (1) {
 		/* display useful information and prompt */
-		env_print(global);
 		printf("skm> ");
 		/* get input */
 		if (fgets(buf, INPUTMAX, stdin) == NULL)
@@ -79,7 +81,7 @@ int main(void) {
 		}
 		retval = eval(global, expr, &result);
 		/* check return value and print output */
-		if (retval == RETVAL_NUMBER || retval == RETVAL_LITERAL) {
+		if (retval == RETVAL_ATOM) {
 			printf("%s\n", (char *)result);
 		} else if (retval == RETVAL_LAMBDA) {
 			b = (Lambda *)result;
@@ -96,6 +98,7 @@ int main(void) {
 		env_sweep_frames(global);
 	}
         cleanup(global);
+        printf("\n");
 	return 0;
 }
 
@@ -108,30 +111,30 @@ int eval(Env *env, Expr *expr, void **result) {
 
 	if (env == NULL || expr == NULL)
 		return RETVAL_ERROR;
-	if (isatom(expr)) {
-		/* atoms and special forms */
-		atom = expr_getword(expr);
-		if (isnum(atom)) {
+	if (is_atom(expr)) {
+                /* self evaluating */
+		atom = expr_get_word(expr);
+		if (is_num(atom)) {
 			*result = strdup(atom);
-			return RETVAL_NUMBER;
-		} else if (isquoted(atom)) {
+			return RETVAL_ATOM;
+		} else if (is_quoted(atom)) {
 			*result = strdup(atom + 1);
-			return RETVAL_LITERAL;
+			return RETVAL_ATOM;
 		} else {
-			/* look up the symbol in environment
-			 * starting from current frame */
+                        /* lookup symbol */
 			if ((bind = lookup(env, atom)) == NULL)
 				return RETVAL_ERROR;
-			if (bind->type != RETVAL_LAMBDA)
+			if (bind->type == RETVAL_ATOM)
 				*result = strdup((char *)bind->value);
 			else
 				*result = bind->value;
 			return bind->type;
 		}
 	} else {
-		if (isdefine(expr)) {
+                /* special forms */
+		if (is_define(expr)) {
 			return eval_define(env, expr, result);
-		} else if (islambda(expr)) {
+		} else if (is_lambda(expr)) {
 			return eval_lambda(env, expr, result);
 		} else {
                         /* application */
@@ -142,7 +145,7 @@ int eval(Env *env, Expr *expr, void **result) {
 			if (operands == NULL)
 				return RETVAL_ERROR;
 			retval = apply(proc, operands, result);
-			/* cleanup */
+			/* cleanup application */
                         lambda_check_remove(proc);
 			listtraverse(operands, op_free_helper);
 			listfree(operands);
@@ -153,22 +156,22 @@ int eval(Env *env, Expr *expr, void **result) {
 }
 
 /* Return non-zero if the Expression is not a list */
-int isatom(Expr *expr) {
-	return expr_isword(expr);
+int is_atom(Expr *expr) {
+	return expr_is_word(expr);
 }
 
 /* Return non-zero if the Expression is an empty list */
-int isemptylist(Expr *expr) {
-	return expr_isemptylist(expr);
+int is_emptylist(Expr *expr) {
+	return expr_is_emptylist(expr);
 }
 
 /* Return non-zero if the Expression is a non-empty list */
-int islist(Expr *expr) {
-	return expr_islist(expr);
+int is_list(Expr *expr) {
+	return expr_is_list(expr);
 }
 
 /* Return non-zero if the string is real number */
-int isnum(char *atom) {
+int is_num(char *atom) {
 	int decimalcount = 0;
 
 	/* error */
@@ -191,35 +194,35 @@ int isnum(char *atom) {
 }
 
 /* Return non-zero if the first char is a single quote */
-int isquoted(char *atom) {
+int is_quoted(char *atom) {
 	if (atom == NULL)
 		return 0;
 	return (*atom == '\'');
 }
 
 /* Return non-zero if the expression is a define evaluation */
-int isdefine(Expr *expr) {
+int is_define(Expr *expr) {
 	if (expr == NULL)
 		return 0;
 	/* must consist of at least 3 symbols */
 	if (expr_len(expr) != 3)
 		return 0;
 	/* check the first word of the expression tree */
-        if (!isatom(expr_subexpr(expr)))
+        if (!is_atom(expr_child(expr)))
                 return 0;
-	return (!strcmp(expr_getword(expr_subexpr(expr)), "define"));
+	return (!strcmp(expr_get_word(expr_child(expr)), "define"));
 }
 
 /* Return non-zero if the expression is a lambda evaluation */
-int islambda(Expr *expr) {
+int is_lambda(Expr *expr) {
 	if (expr == NULL)
 		return 0;
 	/* must consist of at least 3 symbols */
 	if (expr_len(expr) != 3)
 		return 0;
-        if (!isatom(expr_subexpr(expr)))
+        if (!is_atom(expr_child(expr)))
                 return 0;
-	return (!strcmp(expr_getword(expr_subexpr(expr)), "lambda"));
+	return (!strcmp(expr_get_word(expr_child(expr)), "lambda"));
 }
 
 /* Returns non-zero if the lambda is a primitive procedure.
@@ -227,7 +230,7 @@ int islambda(Expr *expr) {
  * a NULL body expression. The primitive's param expression
  * is replaced by a identifying string instead of a set of 
  * parameters */
-int isprim(Lambda *b) {
+int is_prim(Lambda *b) {
 	if (b == NULL)
 		return -1;
 	return (b->body == NULL);
@@ -237,15 +240,18 @@ int isprim(Lambda *b) {
 static char *prim_get(Lambda *proc) {
 	if (proc == NULL)
 		return NULL;
-	return expr_getword(proc->param);
+	return expr_get_word(proc->param);
 }
 
 /* Populate the initial environment with primitive procedures */
 static void init_primitives(Env *env) {
 	if (env == NULL)
 		return;
-	/* addition */
 	prim_add(env, "+");
+	prim_add(env, "-");
+	prim_add(env, "*");
+	prim_add(env, "/");
+	prim_add(env, "=");
 	/* please add a few more... */
 }
 
@@ -284,8 +290,8 @@ int eval_lambda(Env *env, Expr *expr, void **result) {
 	Lambda *lambda;
 
 	/* extract parameters and body */
-	param = expr_next(expr_subexpr(expr));
-	body = expr_next(expr_next(expr_subexpr(expr)));
+	param = expr_next(expr_child(expr));
+	body = expr_next(expr_next(expr_child(expr)));
 	/* create a lambda from the obtained expressions */
 	lambda = lambda_new(env, body, param);
 	*result = lambda;
@@ -300,12 +306,12 @@ int eval_define(Env *env, Expr *expr, void **result) {
 	Expr *dexpr;
 
 	/* evaluate expression */
-	dexpr = expr_next(expr_next(expr_subexpr(expr)));
+	dexpr = expr_next(expr_next(expr_child(expr)));
 	retval = eval(env, dexpr, result);
 	if (retval == RETVAL_ERROR)
 		return RETVAL_ERROR;
 	/* get symbol and value */
-	dsymbol = expr_getword(expr_next(expr_subexpr(expr)));
+	dsymbol = expr_get_word(expr_next(expr_child(expr)));
 	dvalue = *result;
 	/* create binding */
 	bind = bind_new(dsymbol, dvalue, retval);
@@ -319,30 +325,87 @@ int eval_define(Env *env, Expr *expr, void **result) {
 	return retval;
 }
 
-
 /* FINISH */
 int apply(Lambda *op, List *operands, void **result) {
-	Node *p;
         Env *env;
-	float f = 0;
 
-	if (isprim(op)) {
-		/* perform addition */
-		if (!strcmp(prim_get(op), "+")) {
-			for (p = listfirst(operands); p; p = p->next)
-				f += atof(((Operand *)p->data)->value);
-			asprintf((char **)result, "%f", f);
-			return RETVAL_NUMBER;
-		} else {
-			return RETVAL_ERROR;
-		}
-	} else {
-                env = env_setup_call(op, operands);
-                if (env == NULL)
-                        return RETVAL_ERROR;
-                return eval(env, op->body, result);
-	}
-	return RETVAL_ERROR;
+	if (is_prim(op))
+                return apply_primitive(op, operands, result);
+        env = env_setup_call(op, operands);
+        if (env == NULL)
+                return RETVAL_ERROR;
+        return eval(env, op->body, result);
+}
+
+/* primitives library */
+int apply_primitive(Lambda *prim, List *operands, void **result) {
+        Node *p;
+	float f = 0;
+        Operand *comparable1, *comparable2;
+
+        /* basic arithmetic */
+        if (!strcmp(prim_get(prim), "+")) {
+                for (p = listfirst(operands); p; p = p->next)
+                        f += atof(((Operand *)p->data)->value);
+                asprintf((char **)result, "%f", f);
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "-")) {
+                p = listfirst(operands);
+                f = atof(((Operand *)p->data)->value);
+                for (p = p->next; p; p = p->next)
+                        f -= atof(((Operand *)p->data)->value);
+                asprintf((char **)result, "%f", f);
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "*")) {
+                f = 1;
+                for (p = listfirst(operands); p; p = p->next)
+                        f *= atof(((Operand *)p->data)->value);
+                asprintf((char **)result, "%f", f);
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "/")) {
+                p = listfirst(operands);
+                f = atof(((Operand *)p->data)->value);
+                for (p = p->next; p; p = p->next)
+                        f /= atof(((Operand *)p->data)->value);
+                asprintf((char **)result, "%f", f);
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "=")) {
+                for (p = listfirst(operands); p; p = p->next) {
+                        if (p->next == NULL) {
+                                *result = strdup("#t");
+                                return RETVAL_ATOM;
+                        }
+                        comparable1 = (Operand *)p->data;
+                        comparable2 = (Operand *)p->next->data;
+                        /* must match types */
+                        if (comparable1->type == RETVAL_LAMBDA) {
+                                if (comparable2->type != RETVAL_LAMBDA) {
+                                        *result = strdup("#f");
+                                        return RETVAL_ATOM;
+                                } 
+                                /* if they are both lambdas then compare their address in memory */
+                                if (comparable1->value != comparable2->value) {
+                                        *result = strdup("#f");
+                                        return RETVAL_ATOM;
+                                }
+                        } else if (is_num((char *)comparable1->value)) {
+                                if (!is_num((char *)comparable2->value)) {
+                                        *result = strdup("#f");
+                                        return RETVAL_ATOM;
+                                }
+                                if (atof((char *)comparable1->value) != atof((char *)comparable2->value)) {
+                                        *result = strdup("#f");
+                                        return RETVAL_ATOM;
+                                }
+                        } else {
+                                if (strcmp((char *)comparable1->value, (char *)comparable2->value)) {
+                                        *result = strdup("#f");
+                                        return RETVAL_ATOM;
+                                }
+                        }
+                }
+        }
+        return RETVAL_ERROR;
 }
 
 /* set up a lambda call, return pointer to the prepared environment */
@@ -372,11 +435,11 @@ Env *env_setup_call(Lambda *op, List *operands) {
         }
         /* go through each parameter and bind an operand to it */
         p = listfirst(operands);
-        for (param = expr_subexpr(op->param); param; param = expr_next(param)) {
+        for (param = expr_child(op->param); param; param = expr_next(param)) {
                 if (p == NULL)
                         break;
                 opand = (Operand *)p->data;
-                bind = bind_new(expr_getword(param), opand->value, opand->type);
+                bind = bind_new(expr_get_word(param), opand->value, opand->type);
                 if (bind == NULL)
                         break;
                 if (bind_add(env, bind) == NULL)
@@ -396,7 +459,7 @@ Lambda *get_operator(Env *env, Expr *expr) {
 	void *proc;
 	int retval;
 
-	retval = eval(env, expr_subexpr(expr), &proc);
+	retval = eval(env, expr_child(expr), &proc);
 	if (retval != RETVAL_LAMBDA)
 		return NULL;
 	return (Lambda *)proc;
@@ -412,13 +475,13 @@ List *get_operands(Env *env, Expr *expr) {
 	if (expr == NULL)
 		return NULL;
 	/* make sure it is not an atom or empty list */
-	if (isatom(expr) || isemptylist(expr))
+	if (is_atom(expr) || is_emptylist(expr))
 		return NULL;
 	/* allocate a new list for operands */
 	operands = listnew();
 	if (operands == NULL)
 		return NULL;
-	for (expr = expr_next(expr_subexpr(expr)); expr; expr = expr_next(expr)) {
+	for (expr = expr_next(expr_child(expr)); expr; expr = expr_next(expr)) {
 		/* evaluate each sub expression recursively */
 		retval = eval(env, expr, &result);
 		if (retval == RETVAL_ERROR) {
@@ -472,5 +535,5 @@ void cleanup(Env *global) {
         env_sweep_frames(global);
         /* get rid of global frame/environment */
         frame_free(env_frame(global));
-	treeremove(global);
+	tree_free(global);
 }

@@ -14,10 +14,11 @@
 #define TYPE_PROC 		0
 #define TYPE_ARG 		1
 
-static Tree *branchup(Tree *t);
-static Tree *branchdown(Tree *t);
-static int addword(Tree *t, void *data, int type);
-static int expr_copy_helper(Expr *old, Expr *new);
+static Tree *up(Tree *t);
+static Tree *down(Tree *t);
+static int expr_insert_word(Tree *t, void *data, int type);
+static void expr_copy_helper(Expr *copy);
+static void expr_free_helper(Expr *e);
 
 /* copy elements of exp buffer into a tree */
 Expr *parse(char *exp) {
@@ -29,7 +30,7 @@ Expr *parse(char *exp) {
 	int i = 0; 		
 
 	/* check if malloc succeeded */
-	if ((root = treenew(NULL)) == NULL)
+	if ((root = tree_new(NULL)) == NULL)
 		return NULL;
 	/* initialize buffer */
 	memset(buf, 0, MAX_WORD);
@@ -43,15 +44,12 @@ Expr *parse(char *exp) {
 			}
 		} else if (state == STATE_OPEN_PAREN) {
 			if (*ptr == ')') {
-				/* experimental: empty lists */
 				layer--;
-				root = branchdown(root);
+				root = down(root);
 				state = STATE_CLOSE_PAREN;
-			//	state = STATE_ERROR;
-			//	printf("error: premature closing paren\n");
 			} else if (*ptr == '(') {
 				layer++;
-				root = branchup(root);
+				root = up(root);
 				state = STATE_OPEN_PAREN;
 			} else if (*ptr != ' ') {
 				buf[i++] = *ptr;
@@ -60,15 +58,15 @@ Expr *parse(char *exp) {
 		} else if (state == STATE_CLOSE_PAREN) {
 			if (layer <= 0) {
 				state = STATE_ERROR;
-				printf("error: excess close paren\n");
+				printf("error: mismatched parens\n");
 			} else if (*ptr == ')') {
 				/* go to next buf */
 				layer--;
-				root = branchdown(root);
+				root = down(root);
 				state = STATE_CLOSE_PAREN;
 			} else if (*ptr == '(') {
 				layer++;
-				root = branchup(root);
+				root = up(root);
 				state = STATE_OPEN_PAREN;
 			} else if (*ptr != ' ') {
 				buf[i++] = *ptr;
@@ -80,12 +78,12 @@ Expr *parse(char *exp) {
 				buf[i] = '\0';
 				if (state == STATE_PROC) {
 					/* malloc() failed somewhere */
-					if (addword(root, strdup(buf), TYPE_PROC) < 0) {
+					if (expr_insert_word(root, strdup(buf), TYPE_PROC) < 0) {
 						state = STATE_ERROR;
 						printf("error: memory error\n");
 					}
 				} else {
-					if (addword(root, strdup(buf), TYPE_ARG) < 0) {
+					if (expr_insert_word(root, strdup(buf), TYPE_ARG) < 0) {
 						state = STATE_ERROR;
 						printf("error: memory error\n");
 					}
@@ -98,18 +96,17 @@ Expr *parse(char *exp) {
 			}
 			if (*ptr == ')') {
 				layer--;
-				root = branchdown(root);
+				root = down(root);
 				state = STATE_CLOSE_PAREN;
 			} else if (*ptr == '(') {
 				layer++;
-				root = branchup(root);
+				root = up(root);
 				state = STATE_OPEN_PAREN;
 			} else if (*ptr != ' ')
 				buf[i++] = *ptr;
 		}
 		ptr++;
 	} while (*ptr != '\0' && state != STATE_ERROR);
-
 	/* not a function call, return value instead */
 	if (state != STATE_ERROR && state == STATE_BEGIN) {
 		/* cut out spaces */
@@ -119,9 +116,9 @@ Expr *parse(char *exp) {
 				break;
 			}
 		}
-		treesetdatum(root, strdup(exp));
+		tree_set_data(root, strdup(exp));
 	} else if (state != STATE_ERROR && layer > 0) {
-		printf("error: excess open paren\n");
+		printf("error: mismatched parens\n");
 		state = STATE_ERROR;
 	} 
 	if (state == STATE_ERROR) {
@@ -136,45 +133,46 @@ Expr *parse(char *exp) {
 Expr *expr_next(Expr *expr) {
 	if (expr == NULL)
 		return NULL;
-	return treenext(expr);
+	return tree_next(expr);
 }
 
 /* return the first word or sub-expression of the parent expression */
-Expr *expr_subexpr(Expr *parent) {
+Expr *expr_child(Expr *parent) {
 	if (parent == NULL)
 		return NULL;
 	/* if the expression is just a single word
 	 * return null */
-	if (expr_isword(parent))
+	if (expr_is_word(parent))
 		return NULL;
-	return treefirstchild(parent);
+	return tree_child(parent);
 }
 
 /* if the expression consists of a single
  * root node pointing to a string it is a word */
-int expr_isword(Expr *expr) {
+int expr_is_word(Expr *expr) {
 	/* we need this here because an empty list is
 	 * also a tree, so we check if it points to a word */
-	if (expr_getword(expr) != NULL)
-		return treeisleaf(expr);
+	if (expr_get_word(expr) != NULL)
+		return tree_is_leaf(expr);
 	return 0;
 }
 
-/* if it's not a word, its a list */
-int expr_islist(Expr *expr) {
-	return !expr_isword(expr);
+/* if it's not a word, its a list and contains
+   a NULL root tree with one or more children trees */
+int expr_is_list(Expr *expr) {
+	return !expr_is_word(expr);
 }
 
 /* if it's an empty list then the expression will be 
  * a single root with a NULL pointer to its data */
-int expr_isemptylist(Expr *expr) {
-	if (expr_getword(expr) == NULL)
-		return treeisleaf(expr);
+int expr_is_emptylist(Expr *expr) {
+	if (expr_get_word(expr) == NULL)
+		return tree_is_leaf(expr);
 	return 0;
 }
 
 /* return the word pointed to by the datum of expr */
-char *expr_getword(Expr *expr) {
+char *expr_get_word(Expr *expr) {
 	if (expr == NULL)
 		return NULL;
 	return (char *)expr->data;
@@ -184,75 +182,55 @@ char *expr_getword(Expr *expr) {
 int expr_len(Expr *expr) {
 	if (expr == NULL)
 		return -1;
-        if (expr_isword(expr))
+        if (expr_is_word(expr))
                 return -1;
-	return listsize(expr->children);
+	return tree_count_children(expr);
 }
 
-/* copy the expression tree as well as allocate duplicated strings */
 Expr *expr_copy(Expr *orig) {
-	Tree *clone;
+        Expr *copy;
 
-	if (orig == NULL)
-		return NULL;
-        if (expr_isword(orig))
-                return treenew(strdup((char *)orig->data));
-	if ((clone = treenew(NULL)) == NULL)
-		return NULL;
-	if (expr_copy_helper(orig, clone) < 0) {
-		treefree(clone);
-		return NULL;
-	}
+        if (orig == NULL)
+                return NULL;
+        copy = tree_copy(orig);
+        tree_traverse(copy, expr_copy_helper);
 
-	return clone;
+        return copy;
+}
+
+/* replace each data with a newly allocated string */
+static void expr_copy_helper(Expr *copy) {
+        if (copy->data == NULL)
+                return;
+        copy->data = strdup((char *)copy->data);
 }
 
 /* free an expression */
 void expr_free(Expr *e) {
-	treetraverse(e, treefreedata);
-	treefree(e);
+	tree_traverse(e, expr_free_helper);
+	tree_free(e);
 }
 
-/* helper for cloneexpr */
-static int expr_copy_helper(Expr *old, Expr *new) {
-	Node *oldp;
-	Expr *newp;
-	char *word;
-
-	if (old == NULL || new == NULL)
-		return 0;
-
-	/* add all children */
-	for (oldp = listfirst(old->children); oldp != NULL; oldp = oldp->next) {
-		word = (char *)((Expr *)oldp->data)->data;
-		if (word != NULL)
-			word = strdup(word);
-		/* throw malloc error */
-		if ((newp = treeaddchild(new, word)) == NULL)
-			return -1;
-		/* do this recursively for the new child as well */
-		if (expr_copy_helper((Expr *)oldp->data, newp) < 0)
-			return -1;
-	}
-
-	return 0;
+/* wrapper */
+static void expr_free_helper(Expr *e) {
+        free(e->data);
 }
 
 /* go up a level */
-static Tree *branchup(Tree *t) {
-	return treeaddchild(t, NULL);
+static Tree *up(Tree *t) {
+	return tree_insert_child(t, NULL);
 }
 
 /* go down a level */
-static Tree *branchdown(Tree *t) {
+static Tree *down(Tree *t) {
 	if (t->parent == NULL)
 		return t;
-	return treeparent(t);
+	return tree_parent(t);
 }
 
 /* add a procedure or argument */
-static int addword(Tree *t, void *data, int type) {
-	if (treeaddchild(t, data) == NULL)
+static int expr_insert_word(Tree *t, void *data, int type) {
+	if (tree_insert_child(t, data) == NULL)
 		return -1;
 	return 0;
 }

@@ -1,229 +1,224 @@
-/* node - data structure implementations
- * author: Eugene Ma (edmaa2) */
 #include "node.h"
 
-static int treecopy_helper(Tree *old, Tree *new);
+static void tree_free_helper(Tree *t);
+static int tree_copy_helper(Tree *copy, Tree *t);
+static void tree_print_helper(Tree *t, int depth);
 
-/* return a new Tree */
-Tree *
-treenew(void *data) {
-	Tree *t;
+/* making new trees */
+Tree *tree_new(void *data) {
+        Tree *t;
 
-	if ((t = malloc(sizeof(Tree))) == NULL)
-		return NULL;
-
-	if ((t->children = listnew()) == NULL)
-		return NULL;
-	t->data = data; 
-	t->parent = NULL;
-
-	return t;
+        t = malloc(sizeof(Tree));
+        if (t == NULL)
+                return NULL;
+        t->parent = NULL;
+        t->next = NULL;
+        t->child = NULL;
+        t->data = data;
+        return t;
 }
 
-/* set the data */
-void 
-treesetdatum(Tree *t, void *data) {
-	if (t == NULL)
-		return;
-	t->data = data;
+Tree *tree_insert_child(Tree *p, void *data) {
+        Tree *t, *sib;
+
+        if (p == NULL)
+                return NULL;
+        /* prepare tree for insertion */
+        t = malloc(sizeof(Tree));
+        if (t == NULL)
+                return NULL;
+        t->parent = p;
+        t->child = NULL;
+        t->data = data;
+        /* check for existing sibling */
+        sib = p->child;
+        if (sib != NULL) {
+                /* append to end */
+                for (; sib->next; sib = sib->next)
+                        ;
+                t->next = sib->next;
+                sib->next = t;
+        } else {
+                p->child = t;
+                t->next = NULL;
+        }
+        return t;
 }
 
-/* remove a tree from its parent */
-void 
-treeremove(Tree *t) {
-	/* remove linkages if needed */
-	if (t->parent != NULL)
-		listremove(t->parent->children, t);
-	treefree(t);
+/* insert tree right after sibling */
+Tree *tree_insert_sib(Tree *sib, void *data) {
+        Tree *t;
+        if (sib == NULL)
+                return NULL;
+        /* fails with roots */
+        if (sib->parent == NULL)
+                return NULL;
+        /* prepare for insertion */
+        t = malloc(sizeof(Tree));
+        if (t == NULL)
+                return NULL;
+        t->parent = sib->parent;
+        t->next = sib->next;
+        t->child = NULL;
+        t->data = data;
+        /* insert after sibling */
+        sib->next = t;
+        return t;
 }
 
-/* branch out at parent tree, return child) */
-Tree *
-treeaddchild(Tree *parent, void *data) {
-	Tree *t = treenew(data);
+/* detach a tree from its parent and/or sibling */
+Tree *tree_detach(Tree *t) {
+        Tree *p, *sib;
 
-	if (t == NULL || parent == NULL)
-		return NULL;
-	/* connect parent */
-	t->parent = parent;
-	/* add to list */
-	if (listappend(parent->children, t) == NULL)
-		return NULL;
-
-	return t;
+        if (t == NULL)
+                return NULL;
+        /* disconnected adjacent trees */
+        if (t->parent != NULL) {
+                p = t->parent;
+                sib = t->parent->child;
+                /* t is the first child or only child */
+                if (sib == t)
+                        p->child = t->next;
+                else {
+                        /* find the preceding sibling */
+                        for (; sib; sib = sib->next) {
+                                if (sib->next == t)
+                                        break;
+                        }
+                        if (sib == NULL)
+                                return NULL;
+                        sib->next = t->next;
+                }
+        }
+        t->parent = NULL;
+        t->next = NULL;
+        return t;
 }
 
-/* add a sibling */
-Tree * 
-treeaddsib(Tree *t, void *data) {
-	if (t == NULL || t->parent == NULL)
-		return NULL;
-
-	return treeaddchild(t->parent, data);
+void tree_set_data(Tree *t, void *data) {
+        if (t == NULL)
+                return;
+        t->data = data;
 }
 
-/* return the parent */
-Tree *
-treeparent(Tree *t) {
-	if (t == NULL)
-		return NULL;
-	return t->parent;
+void tree_free(Tree *t) {
+        if (t == NULL)
+                return;
+        tree_detach(t);
+        tree_traverse(t, tree_free_helper);
 }
 
-/* return the first child of parent */
-Tree *
-treefirstchild(Tree *parent) {
-	if (parent == NULL || listsize(parent->children) == 0)
-		return NULL;
-	return listfirst(parent->children)->data;
+/* cast into the right function pointer */
+static void tree_free_helper(Tree *t) {
+        free(t);
 }
 
-/* return the next tree on the same level */
-Tree *
-treenext(Tree *t) {
-	Node *p;
+/* dfs post order traversal */
+void tree_traverse(Tree *t, void (*func)(Tree *t)) {
+        Tree *c, *next;
 
-	if (t == NULL || t->parent == NULL)
-		return NULL;
-	/* get the pointer to the first node */
-	for (p = listfirst(t->parent->children); p != NULL; p = p->next) {
-		if (p->data == t)
-			break;
-	}
-	if (p == NULL || p->next == NULL)
-		return NULL;
-	return p->next->data;
+        if (t == NULL)
+                return;
+        for (c = t->child; c; c = next) {
+                /* save the next tree in case we detach the current tree */
+                next = c->next;
+                tree_traverse(c, func);
+        }
+        /* visit tree after children tree have been visited */
+        func(t);
 }
 
-/* depth first postorder traversal */
-void
-treetraverse(Tree *t, void (*func)(Tree *t)) {
-	Node *p, *tmp;
+Tree *tree_copy(Tree *orig) {
+        Tree *copy;
 
-	if (t == NULL)
-		return;
-	/* visit children */
-	for (p = listfirst(t->children); p != NULL; p = tmp) {
-		/* save next node in case we remove it */
-		tmp = p->next;
-		treetraverse((Tree *)p->data, func);
-	}
-	/* visit current tree */
-	(*func)(t);
+        if (orig == NULL)
+                return NULL;
+        copy = tree_new(orig->data);
+        if (copy == NULL)
+                return NULL;
+        if (tree_copy_helper(copy, orig)) {
+                tree_free(copy);
+                return NULL;
+        }
+        return copy;
 }
 
-/* free data only */
-void 
-treefreedata(Tree *t) {
-	free(t->data);
+/* copy children - return zero on success */
+static int tree_copy_helper(Tree *copy, Tree *orig) {
+        Tree *origc, *copyc;
+
+        if (orig == NULL)
+                return -1;
+        /* add children */
+        for (origc = orig->child; origc; origc = origc->next) {
+                copyc = tree_insert_child(copy, origc->data);
+                if (copyc == NULL)
+                        return -1;
+                if (tree_copy_helper(copyc, origc))
+                        return -1;
+        }
+        return 0;
 }
 
-/* is this tree a leaf? */
-int 
-treeisleaf(Tree *t) {
-	if (t == NULL)
-		return -1;
-	return (listsize(t->children) == 0);
+void tree_print(Tree *t) {
+        tree_print_helper(t, 0);
 }
 
-/* return the tree whose data matches (dfs) */
-Tree *
-treesearch(Tree *haystack, void *needle, int (*search)(void *h, void *n)) {
-	Node *p;
-	Tree *tmp;
+static void tree_print_helper(Tree *t, int depth) {
+        Tree *c;
+        int d;
 
-	if (haystack == NULL || needle == NULL)
-		return NULL;
-
-	/* visit current data */
-	if ((*search)(haystack->data, needle) == 0)
-		return haystack;
-	/* visit children */
-	for (p = listfirst(haystack->children); p != NULL; p = p->next) {
-		if ((tmp = treesearch((Tree *)p->data, needle, search)) != NULL)
-			return tmp;
-	}
-
-	/* nothing found */
-	return NULL;
+        if (t == NULL)
+                return;
+        /* print nicely */
+        for (d = depth; d > 0; d--)
+                printf("- ");
+        printf("\\");
+        if (t->data == NULL)
+                printf("NULL\n");
+        else
+                printf("%s\n", (char *)(t->data));
+        for (c = t->child; c; c = c->next)
+                tree_print_helper(c, depth + 1);
 }
 
-/* clone a tree's nodes */
-Tree *treecopy(Tree *orig) {
-	Tree *clone;
+int tree_count_children(Tree *t) {
+        int i = 0;
 
-	if (orig == NULL)
-		return NULL;
-	if ((clone = treenew(orig->data)) == NULL)
-		return NULL;
-	if (treecopy_helper(orig, clone) < 0) {
-		treefree(clone);
-		return NULL;
-	}
-
-	return clone;
+        if (t == NULL)
+                return -1;
+        for (t = t->child; t; t = t->next)
+                i++;
+        return i;
+}
+        
+int tree_is_root(Tree *t) {
+        if (t == NULL)
+                return -1;
+        return (t->parent == NULL);
 }
 
-/* orig is the tree whose children is to be added to tree new */
-static int treecopy_helper(Tree *old, Tree *new) {
-	Node *oldp;
-	Tree *newp;
-
-	if (old == NULL || new == NULL)
-		return 0;
-
-	/* add all children */
-	for (oldp = listfirst(old->children); oldp != NULL; oldp = oldp->next) {
-		/* throw malloc error */
-		if ((newp = treeaddchild(new, ((Tree *)oldp->data)->data)) == NULL)
-			return -1;
-		/* do this recursively for the new child as well */
-		if (treecopy_helper((Tree *)oldp->data, newp) < 0)
-			return -1;
-	}
-
-	return 0;
+int tree_is_leaf(Tree *t) {
+        if (t == NULL)
+                return -1;
+        return (t->child == NULL);
 }
 
-/* 0 if match found */
-int 
-treesearchstring(void *data, void *str) {
-	if (data == NULL || str == NULL)
-		return -1;
-	return strcmp((char *)data, (char *)str);
+/* navigating the tree */
+Tree *tree_next(Tree *t) {
+        if (t == NULL)
+                return NULL;
+        return t->next;
 }
 
-/* recursively free all the nodes in a tree */
-void 
-treefree(void *t) {
-	List *children;
-
-	if (t == NULL)
-		return;
-	children = ((Tree *)t)->children;
-	listtraverse(children, treefree);
-	listfree(children);
-	free(t);
+Tree *tree_parent(Tree *t) {
+        if (t == NULL)
+                return NULL;
+        return t->parent;
 }
 
-/* print a tree recursively, revealing its heiarchal structure */
-void 
-treeprint(Tree *t, int depth) {
-	Node *p;
-	int d;
-
-	if (t == NULL) {
-		printf("MISSING TREE\n");
-		return;
-	}
-
-	for (d = depth; d > 0; d--)
-		printf("- ");
-	printf("\\");
-	if (t->data == NULL)
-		printf("NULL\n");
-	else
-		printf("%s\n", (char *)(t->data));
-	for (p = t->children->head; p != NULL; p = p->next)
-		treeprint((Tree *)p->data, depth + 1);
+Tree *tree_child(Tree *t) {
+        if (t == NULL)
+                return NULL;
+        return t->child;
 }

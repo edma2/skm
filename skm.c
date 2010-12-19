@@ -15,7 +15,7 @@ Env *env_new(void) {
 	Frame *f = frame_new();
 	if (f == NULL)
 		return NULL;
-	return treenew(f);
+	return tree_new(f);
 }
 
 /* return 1 if this environment has no parent */
@@ -27,12 +27,12 @@ int env_isglobal(Env *env) {
 Env *env_extend(Env *env, Frame *f) {
 	if (f == NULL)
 		return NULL;
-	return treeaddchild(env, f);
+	return tree_insert_child(env, f);
 }
 
 /* return parent environment */
 Env *env_parent(Env *env) {
-	return treeparent(env);
+	return tree_parent(env);
 }
 
 /* lookup a symbol */
@@ -59,7 +59,7 @@ void lambda_check_remove(Lambda *b) {
 
 /* print all frames in environment */
 void env_print(Env *env) {
-	treetraverse(env, frame_print);
+	tree_traverse(env, frame_print);
 }
 
 /* print the top level frame of the environment */
@@ -94,7 +94,7 @@ void bind_print(Bind *bind) {
 /* set every binding to an arbitrary string: this
    removes all lambdas and frames */
 void env_sweep_lambdas(Env *env) {
-        treetraverse(env, env_sweep_lambdas_helper);
+        tree_traverse(env, env_sweep_lambdas_helper);
 }
 
 /* tree traversal helper function */
@@ -120,7 +120,7 @@ static void env_sweep_lambdas_helper(Env *env) {
 static void bind_reset(Env *env, char *symbol) {
         Bind *zero;
 
-        zero = bind_new(symbol, "0", RETVAL_LITERAL);
+        zero = bind_new(symbol, "0", RETVAL_ATOM);
         if (zero == NULL)
                 return;
         bind_add(env, zero);
@@ -128,7 +128,7 @@ static void bind_reset(Env *env, char *symbol) {
 
 /* free all frames without save marker */
 void env_sweep_frames(Env *env) {
-	treetraverse(env, env_sweep_frames_helper);
+	tree_traverse(env, env_sweep_frames_helper);
 }
 
 /* tree traversal helper function */
@@ -141,7 +141,7 @@ static void env_sweep_frames_helper(Env *env) {
 	if (env_frame(env)->lambda_count > 0)
 		return;
 	frame_free(env_frame(env));
-	treeremove(env);
+	tree_free(env);
 }
 
 void frame_free(Frame *f) {
@@ -274,7 +274,7 @@ Bind *bind_new(char *symbol, void *value, int type) {
 		((Lambda *)value)->bind_count++;
 		/* we should also increase the frame counter */
 		env_frame(((Lambda *)value)->env)->lambda_count++;
-	} else {
+	} else if (type == RETVAL_ATOM) {
 		/* or else we should just allocate a new string
 		 * in memory */
 		value = strdup((char *)value);

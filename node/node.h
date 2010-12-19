@@ -6,22 +6,22 @@
 #include <stdlib.h>
 
 typedef struct Node Node;
-typedef struct Tree Tree;
 struct Node {
 	void *data;
 	struct Node *next; 
 };
-
-typedef struct {
+struct List {
 	Node *head;			
 	int length;		
-} List;
-
-struct Tree {
-	void *data;
-	List *children;	
-	struct Tree *parent;
 };
+typedef struct List List;
+struct Tree {
+	struct Tree *parent;
+	struct Tree *next;
+	struct Tree *child;
+	void *data;
+};
+typedef struct Tree Tree;
 
 Node *listappend(List *lst, void *data); 
 List *listclone(List *lst);		
@@ -43,19 +43,18 @@ Node *nodeinsert(Node *p, void *data);
 inline Node *nodenew(void *data); 	
 void noderemove(Node *h, Node *t);
 
-Tree *treeaddchild(Tree *parent, void *data); 	
-Tree *treeaddsib(Tree *t, void *data);
-Tree *treecopy(Tree *orig);		
-Tree *treefirstchild(Tree *parent);	
-Tree *treesearch(Tree *haystack, void *needle, int (*search)(void *h, void *n));
-void treefree(void *t);			
-void treefreedata(Tree *t);			
-int treeisleaf(Tree *t);
-Tree *treenew(void *data);	
-Tree *treenext(Tree *t);
-Tree *treeparent(Tree *t);
-void treeremove(Tree *t);
-void treeprint(Tree *t, int depth);    	
-int treesearchstring(void *datum, void *str); 	
-void treesetdatum(Tree *t, void *data); 
-void treetraverse(Tree *t, void (*func)(Tree *t));
+Tree *tree_new(void *data);
+Tree *tree_insert_child(Tree *t, void *data);
+Tree *tree_insert_sib(Tree *t, void *data);
+Tree *tree_detach(Tree *t);
+Tree *tree_next(Tree *t);
+Tree *tree_child(Tree *t);
+Tree *tree_parent(Tree *t);
+Tree *tree_copy(Tree *t);
+int tree_is_root(Tree *t);
+int tree_is_leaf(Tree *t);
+int tree_count_children(Tree *t);
+void tree_set_data(Tree *t, void *data);
+void tree_traverse(Tree *t, void (*func)(Tree *t));
+void tree_free(Tree *t);
+void tree_print(Tree *t);

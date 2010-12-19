@@ -18,8 +18,7 @@
 #define SYMBOL_MAX 	30
 #define UNBOUND_LAMBDA 	0
 #define BOUND_LAMBDA 	1
-#define RETVAL_NUMBER 	0
-#define RETVAL_LITERAL 	1
+#define RETVAL_ATOM 	0
 #define RETVAL_LAMBDA 	2
 #define RETVAL_ERROR 	-1
 
