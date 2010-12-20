@@ -1,12 +1,7 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
 
-/* TODO: better error messages 
-         redesign expr interface to car/cdr
-         make data structures lighter
-         car/cdr lists - e.g. '(1 2 3)
-         */
-
+/* for asprintf */
 #define _GNU_SOURCE
 #include "skm.h"
 #include <ctype.h>
@@ -18,32 +13,11 @@ typedef struct {
 	int type;
 } Operand;
 
-/* general */
 int eval(Env *env, Expr *expr, void **result);
 int apply(Lambda *op, List *operands, void **result);
-Bind *lookup(Env *env, char *symbol);
-Env *env_setup_call(Lambda *op, List *operands);
-void cleanup(Env *env);
-
-/* primitives */
-static void init_primitives(Env *env);
-static void prim_add(Env *env, char *ident);
-static char *prim_get(Lambda *proc);
-int apply_primitive(Lambda *prim, List *operands, void **result);
-
-/* special forms */
 int eval_lambda(Env *env, Expr *expr, void **result);
 int eval_define(Env *env, Expr *expr, void **result);
 int eval_if(Env *env, Expr *expr, void **result);
-
-/* application */
-Lambda *get_operator(Env *env, Expr *expr);
-List *get_operands(Env *env, Expr *expr);
-Operand *op_new(void *value, int type);
-void op_free(Operand *op);
-static void op_free_helper(void *data);
-
-/* determine expression type */
 int is_atom(Expr *expr);
 int is_list(Expr *expr);
 int is_emptylist(Expr *expr);
@@ -53,6 +27,20 @@ int is_define(Expr *expr);
 int is_lambda(Expr *expr);
 int is_if(Expr *expr);
 int is_prim(Lambda *b);
+
+int apply_primitive(Lambda *prim, List *operands, void **result);
+Env *env_setup_call(Lambda *op, List *operands);
+Bind *lookup(Env *env, char *symbol);
+Lambda *get_operator(Env *env, Expr *expr);
+void op_free(Operand *op);
+void cleanup(Env *env);
+List *get_operands(Env *env, Expr *expr);
+Operand *op_new(void *value, int type);
+
+static void init_primitives(Env *env);
+static void prim_add(Env *env, char *ident);
+static char *prim_get(Lambda *proc);
+static void op_free_helper(void *data);
 
 int main(void) {
 	Env *global;

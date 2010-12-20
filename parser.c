@@ -128,6 +128,29 @@ Expr *parse(char *exp) {
 	return root;
 }
 
+/* go up a level */
+static Tree *up(Tree *t) {
+	return tree_insert_child(t, NULL);
+}
+
+/* go down a level */
+static Tree *down(Tree *t) {
+	if (t->parent == NULL)
+		return t;
+	return tree_parent(t);
+}
+
+/* add a procedure or argument */
+static int expr_insert_word(Tree *t, void *data, int type) {
+	if (tree_insert_child(t, data) == NULL)
+		return -1;
+	return 0;
+}
+
+/************************************************/
+/****************   Expr API  *******************/
+/************************************************/
+
 /* return the next word or sub-expression in the expression */
 Expr *expr_next(Expr *expr) {
 	if (expr == NULL)
@@ -213,23 +236,4 @@ void expr_free(Expr *e) {
 /* wrapper */
 static void expr_free_helper(Expr *e) {
         free(e->data);
-}
-
-/* go up a level */
-static Tree *up(Tree *t) {
-	return tree_insert_child(t, NULL);
-}
-
-/* go down a level */
-static Tree *down(Tree *t) {
-	if (t->parent == NULL)
-		return t;
-	return tree_parent(t);
-}
-
-/* add a procedure or argument */
-static int expr_insert_word(Tree *t, void *data, int type) {
-	if (tree_insert_child(t, data) == NULL)
-		return -1;
-	return 0;
 }

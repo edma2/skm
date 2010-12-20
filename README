@@ -2,3 +2,5 @@ skm - scheme interpreter.
 by Eugene Ma (edma2)
 
 Run 'make skm'.
+
+TODO: empty-list, read from file
