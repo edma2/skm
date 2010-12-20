@@ -34,6 +34,7 @@ int apply_primitive(Lambda *prim, List *operands, void **result);
 /* special forms */
 int eval_lambda(Env *env, Expr *expr, void **result);
 int eval_define(Env *env, Expr *expr, void **result);
+int eval_if(Env *env, Expr *expr, void **result);
 
 /* application */
 Lambda *get_operator(Env *env, Expr *expr);
@@ -50,6 +51,7 @@ int is_num(char *atom);
 int is_quoted(char *atom);
 int is_define(Expr *expr);
 int is_lambda(Expr *expr);
+int is_if(Expr *expr);
 int is_prim(Lambda *b);
 
 int main(void) {
@@ -136,6 +138,8 @@ int eval(Env *env, Expr *expr, void **result) {
 			return eval_define(env, expr, result);
 		} else if (is_lambda(expr)) {
 			return eval_lambda(env, expr, result);
+                } else if (is_if(expr)) {
+                        return eval_if(env, expr, result);
 		} else {
                         /* application */
 			proc = get_operator(env, expr);
@@ -198,6 +202,18 @@ int is_quoted(char *atom) {
 	if (atom == NULL)
 		return 0;
 	return (*atom == '\'');
+}
+
+int is_if(Expr *expr) {
+	if (expr == NULL)
+		return 0;
+	/* must consist of at least 4 atoms */
+	if (expr_len(expr) != 4)
+		return 0;
+	/* check the first word of the expression tree */
+        if (!is_atom(expr_child(expr)))
+                return 0;
+	return (!strcmp(expr_get_word(expr_child(expr)), "if"));
 }
 
 /* Return non-zero if the expression is a define evaluation */
@@ -281,6 +297,28 @@ static void prim_add(Env *env, char *ident) {
 		bind_free(bind);
 		return;
 	}
+}
+
+/* Evaluate if statement */
+int eval_if(Env *env, Expr *expr, void **result) {
+        Expr *predicate;
+        Expr *true, *false;
+        int retval;
+        int boolean;
+
+        predicate = expr_next(expr_child(expr));
+        true = expr_next(expr_next(expr_child(expr)));
+        false = expr_next(expr_next(expr_next(expr_child(expr))));
+        retval = eval(env, predicate, result);
+        if (retval == RETVAL_ERROR)
+                return RETVAL_ERROR;
+        /* 0 if false */
+        boolean = strcmp((char *)*result, "#f");
+        if (retval == RETVAL_LAMBDA) 
+                lambda_check_remove((Lambda *)*result);
+        else
+                free(*result);
+        return boolean ? eval(env, true, result) : eval(env, false, result);
 }
 
 /* Evaluate lambda statement */
