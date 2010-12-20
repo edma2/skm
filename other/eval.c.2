@@ -1,0 +1,53 @@
+#include "skm.h"
+
+/* return types of eval() */
+#define EVAL_ATOM 0
+#define EVAL_LAMBDA 1
+#define EVAL_ERR 2
+
+int eval(Environment *env, Expression *expr, void **result);
+
+int main(void) {
+	Expression *expr = Expression_parse("(+ 1 2)");
+	void *result;
+
+	if (eval(NULL, expr, &result) == EVAL_ATOM)
+		printf("%f\n", *((float *)result));
+
+	return 0;
+}
+
+int eval(Environment *env, Expression *expr, void **result) {
+	Tree *tptr;
+	List *arglist;
+	Node *argptr;
+	char *proc;
+	float *ans;
+	
+	/* get procedure */
+	if ((tptr = Tree_first_child(expr)) == NULL) 
+		return EVAL_ERR;
+	if ((arglist = List_new()) == NULL)
+		return EVAL_ERR;
+	if ((ans = malloc(sizeof(float))) == NULL)
+		return EVAL_ERR;
+	*ans = 0;
+	proc = tptr->datum;
+
+	/* built-in expressions */
+	if (!(strcmp(proc, "+"))) {
+		/* fetch arguments */
+		for (tptr = Tree_next_sibling(tptr); tptr != NULL; tptr = Tree_next_sibling(tptr))
+			List_append(arglist, tptr->datum);
+		for (argptr = List_first(arglist); argptr != NULL; argptr = argptr->next)
+			*ans += atof((char *)argptr->data);
+	}
+	else {
+		fprintf(stderr, "unsupported procedure\n");
+		return EVAL_ERR;
+	}
+
+	*result = ans;
+
+	return EVAL_ATOM;
+}
