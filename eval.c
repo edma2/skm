@@ -151,8 +151,8 @@ int eval(Env *env, Expr *expr, void **result) {
 			retval = apply(proc, operands, result);
 			/* cleanup application */
                         lambda_check_remove(proc);
-			listtraverse(operands, op_free_helper);
-			listfree(operands);
+			list_traverse(operands, op_free_helper);
+			list_free(operands);
 			return retval;
 		}
 	}
@@ -383,12 +383,12 @@ int apply_primitive(Lambda *prim, List *operands, void **result) {
 
         /* basic arithmetic */
         if (!strcmp(prim_get(prim), "+")) {
-                for (p = listfirst(operands); p; p = p->next)
+                for (p = list_first(operands); p; p = p->next)
                         f += atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), "-")) {
-                p = listfirst(operands);
+                p = list_first(operands);
                 f = atof(((Operand *)p->data)->value);
                 for (p = p->next; p; p = p->next)
                         f -= atof(((Operand *)p->data)->value);
@@ -396,19 +396,19 @@ int apply_primitive(Lambda *prim, List *operands, void **result) {
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), "*")) {
                 f = 1;
-                for (p = listfirst(operands); p; p = p->next)
+                for (p = list_first(operands); p; p = p->next)
                         f *= atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), "/")) {
-                p = listfirst(operands);
+                p = list_first(operands);
                 f = atof(((Operand *)p->data)->value);
                 for (p = p->next; p; p = p->next)
                         f /= atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), "=")) {
-                for (p = listfirst(operands); p; p = p->next) {
+                for (p = list_first(operands); p; p = p->next) {
                         if (p->next == NULL) {
                                 *result = strdup("#t");
                                 return RETVAL_ATOM;
@@ -461,7 +461,7 @@ Env *env_setup_call(Lambda *op, List *operands) {
         if (op == NULL || operands == NULL)
                 return NULL;
         /* check for mis matching number of operands */
-        if (expr_len(op->param) != listsize(operands))
+        if (expr_len(op->param) != list_size(operands))
                 return NULL;
         f = frame_new();
         if (f == NULL)
@@ -472,7 +472,7 @@ Env *env_setup_call(Lambda *op, List *operands) {
                 return NULL;
         }
         /* go through each parameter and bind an operand to it */
-        p = listfirst(operands);
+        p = list_first(operands);
         for (param = expr_child(op->param); param; param = expr_next(param)) {
                 if (p == NULL)
                         break;
@@ -516,24 +516,24 @@ List *get_operands(Env *env, Expr *expr) {
 	if (is_atom(expr) || is_emptylist(expr))
 		return NULL;
 	/* allocate a new list for operands */
-	operands = listnew();
+	operands = list_new();
 	if (operands == NULL)
 		return NULL;
 	for (expr = expr_next(expr_child(expr)); expr; expr = expr_next(expr)) {
 		/* evaluate each sub expression recursively */
 		retval = eval(env, expr, &result);
 		if (retval == RETVAL_ERROR) {
-			listtraverse(operands, op_free_helper);
-			listfree(operands);
+			list_traverse(operands, op_free_helper);
+			list_free(operands);
 			return NULL;
 		} 
 		op = op_new(result, retval);
 		if (op == NULL) {
-			listtraverse(operands, op_free_helper);
-			listfree(operands);
+			list_traverse(operands, op_free_helper);
+			list_free(operands);
 			return NULL;
 		}
-		listappend(operands, op);
+		list_append(operands, op);
 	}
 
 	return operands;

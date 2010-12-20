@@ -1,6 +1,5 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
-
 #include "parser.h"
 
 #define STATE_BEGIN 		0

@@ -1,0 +1,5 @@
+ds
+author: Eugene Ma (edma2)
+Simple implementations of linked lists and trees. 
+It was created for use with skm, so add more to it if it lacks functionality.
+See ds.h for interface - names should be self-explanatory.

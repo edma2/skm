@@ -1,6 +1,5 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
-
 #include "skm.h"
 
 static void env_sweep_frames_helper(Env *env);
@@ -19,7 +18,7 @@ Env *env_new(void) {
 }
 
 /* return 1 if this environment has no parent */
-int env_isglobal(Env *env) {
+int env_is_global(Env *env) {
 	return env_parent(env) == NULL;
 }
 
@@ -66,10 +65,10 @@ void env_print(Env *env) {
 void frame_print(Env *env) {
 	printf("lambda count: %d\n", env_frame(env)->lambda_count);
 	printf("-----------------------------\n");
-	if (!listsize(env_frame(env)->bindings))
+	if (!list_size(env_frame(env)->bindings))
 		printf("[empty]\n");
 	else
-		listtraverse(env_frame(env)->bindings, bind_print_helper);
+		list_traverse(env_frame(env)->bindings, bind_print_helper);
 	printf("-----------------------------\n\n");
 }
 
@@ -101,18 +100,18 @@ void env_sweep_lambdas(Env *env) {
 static void env_sweep_lambdas_helper(Env *env) {
         Node *p;
         Frame *f = env_frame(env);
-        List *garbage = listnew();
+        List *garbage = list_new();
 
         /* collect all the lambda symbols */
-        for (p = listfirst(f->bindings); p; p = p->next) {
+        for (p = list_first(f->bindings); p; p = p->next) {
                 if (((Bind *)p->data)->type == RETVAL_LAMBDA)
-                        listappend(garbage, (char *)((Bind *)p->data)->symbol);
+                        list_append(garbage, (char *)((Bind *)p->data)->symbol);
         }
         /* for each symbol make a meaningless binding 
            freeing lambdas in the process */
-        for (p = listfirst(garbage); p; p = p->next)
+        for (p = list_first(garbage); p; p = p->next)
                 bind_reset(env, (char *)p->data);
-        listfree(garbage);
+        list_free(garbage);
 }
 
 /* the intent of this function is to 
@@ -134,7 +133,7 @@ void env_sweep_frames(Env *env) {
 /* tree traversal helper function */
 static void env_sweep_frames_helper(Env *env) {
 	/* don't free the global environment either */
-	if (env_isglobal(env))
+	if (env_is_global(env))
 		return;
 	/* if frame has at least one lambda that is 
 	 * associated with it, don't free it! */
@@ -148,8 +147,8 @@ void frame_free(Frame *f) {
 	if (f == NULL)
 		return;
 	/* free all bindings */
-	listtraverse(f->bindings, bind_free_helper);
-	listfree(f->bindings);
+	list_traverse(f->bindings, bind_free_helper);
+	list_free(f->bindings);
 	free(f);
 }
 
@@ -191,7 +190,7 @@ Frame *frame_new(void) {
 	if (f == NULL)
 		return NULL;
 	/* create an empty list of bindings */
-	f->bindings = listnew();
+	f->bindings = list_new();
 	if (f->bindings == NULL) {
 		free(f);
 		return NULL;
@@ -204,18 +203,15 @@ Frame *frame_new(void) {
 Bind *frame_search(Frame *f, char *symbol) {
 	/* return a matching Bind if found
 	 * NULL otherwise */
-	Node *ptr = listsearch(f->bindings, symbol, bind_match);
+	Node *ptr = list_search(f->bindings, symbol, bind_match);
 	return (ptr) ? (Bind *)ptr->data : NULL;
 }
 
 int bind_match(void *bind, void *symbol) {
 	if (bind == NULL || symbol == NULL)
-		/* < 0 should technically be an error
-		 * but this error handling is not yet
-		 * implemented */
 		return -1;
 	/* return 0 if match is found */
-	return (strcmp(((Bind *)bind)->symbol, symbol));
+	return strcmp(((Bind *)bind)->symbol, symbol);
 }
 
 /* Call this after we create a binding, and add it to
@@ -230,23 +226,20 @@ Bind *bind_add(Env *env, Bind *new) {
 	/* check for existing binding in current frame only */
 	if ((old = frame_search(f, new->symbol)))
 		bind_remove(f, old);
-	return (Bind *)listappend(f->bindings, new);
+	return (Bind *)list_append(f->bindings, new);
 }
 
 /* Remove binding from frame and call bind_free */
 void bind_remove(Frame *f, Bind *bind) {
 	/* remove old binding from list 
 	 * and free the bind data struct */
-	listremove(f->bindings, bind);
+	list_remove(f->bindings, bind);
 	bind_free(bind);
 }
 
 /* Returns BOUND_LAMBDA if lambda should stick around in memory */
 static int lambda_isbound(Lambda *b) {
 	if (b == NULL)
-		/* < 0 should technically be an error
-		 * but this error handling is not yet
-		 * implemented */
 		return -1;
 	/* check if lambda is unbound */
 	return (b->bind_count) ? BOUND_LAMBDA : UNBOUND_LAMBDA;
@@ -287,11 +280,11 @@ Bind *bind_new(char *symbol, void *value, int type) {
 /* Create a new lambda given its parameters and body
  * expression, connect it to the given environment */
 Lambda *lambda_new(Env *env, Expr *body, Expr *param) {
-	Lambda *b = malloc(sizeof(Lambda));
+	Lambda *b;
 
+        b = malloc(sizeof(Lambda));
 	if (b == NULL)
 		return NULL;
-
 	/* non-primitive procedure */
 	if (body != NULL) {
 		/* copy expressions */
