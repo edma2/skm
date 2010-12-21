@@ -9,6 +9,7 @@
 #define STATE_ARG 		4
 #define STATE_END 		5
 #define STATE_ERROR 		6
+#define STATE_QUOTE             7
 #define MAX_WORD 		20
 #define TYPE_PROC 		0
 #define TYPE_ARG 		1
@@ -18,6 +19,10 @@ static Tree *down(Tree *t);
 static int expr_insert_word(Tree *t, void *data, int type);
 static void expr_copy_helper(Expr *copy);
 static void expr_free_helper(Expr *e);
+
+int is_whitespace(char c) {
+        return (c == ' ' || c == '\n' || c == '\t' || c == '\r');
+}
 
 /* copy elements of exp buffer into a tree */
 Expr *parse(char *exp) {
@@ -50,9 +55,12 @@ Expr *parse(char *exp) {
 				layer++;
 				root = up(root);
 				state = STATE_OPEN_PAREN;
-			} else if (*ptr != ' ') {
+			} else if (!is_whitespace(*ptr)) {
 				buf[i++] = *ptr;
-				state = STATE_PROC;
+                                if (*ptr == '\"')
+                                        state = STATE_QUOTE;
+                                else
+                                        state = STATE_PROC;
 			}
 		} else if (state == STATE_CLOSE_PAREN) {
 			if (layer <= 0) {
@@ -67,12 +75,12 @@ Expr *parse(char *exp) {
 				layer++;
 				root = up(root);
 				state = STATE_OPEN_PAREN;
-			} else if (*ptr != ' ') {
+			} else if (!is_whitespace(*ptr)) {
 				buf[i++] = *ptr;
 				state = STATE_ARG;
 			}
-		} else if (state == STATE_PROC || STATE_ARG) {
-			if (buf[0] != '\0' && (*ptr == ' ' || *ptr == ')')) {
+		} else if (state == STATE_PROC || state == STATE_ARG) {
+			if (buf[0] != '\0' && (is_whitespace(*ptr) || *ptr == ')')) {
 				/* terminate buf */
 				buf[i] = '\0';
 				if (state == STATE_PROC) {
@@ -101,20 +109,22 @@ Expr *parse(char *exp) {
 				layer++;
 				root = up(root);
 				state = STATE_OPEN_PAREN;
-			} else if (*ptr != ' ')
+			} else if (!is_whitespace(*ptr)) {
 				buf[i++] = *ptr;
-		}
+                                if (*ptr == '\"')
+                                        state = STATE_QUOTE;
+                        } else if (*ptr == '\"') {
+                                state = STATE_QUOTE;
+                        }
+		} else if (state == STATE_QUOTE) {
+                        buf[i++] = *ptr;
+                        if (*ptr == '\"')
+                                state = STATE_ARG;
+                }
 		ptr++;
 	} while (*ptr != '\0' && state != STATE_ERROR);
 	/* not a function call, return value instead */
 	if (state != STATE_ERROR && state == STATE_BEGIN) {
-		/* cut out spaces */
-		for (ptr = exp; *ptr != '\0'; ptr++) {
-			if (*ptr == ' ') {
-				*ptr = '\0';
-				break;
-			}
-		}
 		tree_set_data(root, strdup(exp));
 	} else if (state != STATE_ERROR && layer > 0) {
 		printf("error: mismatched parens\n");

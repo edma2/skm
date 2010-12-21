@@ -1,0 +1,8 @@
+(define + #prim_add)
+(define - #prim_sub)
+(define * #prim_mult)
+(define / #prim_div)
+(define = #prim_eq)
+(define cons (lambda (car cdr) (lambda (c) (if (= c 'car) car (if (= c 'cdr ) cdr '#f)))))
+(define car (lambda (pair) (pair 'car)))
+(define cdr (lambda (pair) (pair 'cdr)))
