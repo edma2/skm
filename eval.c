@@ -1,12 +1,14 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
 
-/* for asprintf */
-#define _GNU_SOURCE
-#include "skm.h"
+#define _GNU_SOURCE     // asprintf
 #include <ctype.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include "skm.h"
 
-#define INPUTMAX 200
+#define INPUTMAX 300
 #define FILEINPUTMAX 2000
 
 typedef struct {
@@ -60,12 +62,12 @@ int main(void) {
 	global = env_new();
 	if (global == NULL)
 		return -1;
-        printf("Welcome to skm (^d to quit)\n");
+        printf("Welcome to skm (C-d to quit)\n");
 	init_primitives(global);
         printf("Initialized built-in primitives.\n");
 	while (1) {
 		/* display useful information and prompt */
-		printf("skm> ");
+		printf("\nskm> ");
 		/* get input */
 		if (fgets(buf, INPUTMAX, stdin) == NULL)
 			break;
@@ -76,10 +78,11 @@ int main(void) {
 			expr_free(expr);
 			continue;
 		}
+                tree_print(expr);
 		retval = eval(global, expr, &result);
 		/* check return value and print output */
 		if (retval == RETVAL_ATOM) {
-			printf("%s\n", (char *)result);
+			printf("%s", (char *)result);
 			free(result);
 		} else if (retval == RETVAL_LAMBDA) {
 			b = (Lambda *)result;
@@ -87,7 +90,7 @@ int main(void) {
 			/* remove lambda if we didn't bind it immediately */
                         lambda_check_remove(b);
 		} else if (retval == RETVAL_ERROR) {
-			printf("not supported yet\n");
+			printf("not supported yet");
                 }
 		expr_free(expr);
 		env_sweep_frames(global);
@@ -206,15 +209,7 @@ int is_quoted(char *atom) {
 	if (*atom == '\'')
                 return 1;
         if (*atom == '\"') {
-                for (atom++; *atom != '\0'; atom++) {
-                        if (*atom == '\"') {
-                                /* terminate the ending
-                                   quote so it doesn't 
-                                   get printed later */
-                                *atom = '\0';
-                                return 1;
-                        }
-                }
+                return 1;
         }
         return 0;
 }
@@ -349,6 +344,7 @@ int eval_begin(Env *env, Expr *expr, void **result) {
         int retval;
         Expr *last;
 
+        /* start from the first expression */
         for (last = expr_next(expr_child(expr)); last; last = expr_next(last)) {
                 retval = eval(env, last, result);
                 if (!expr_next(last))
@@ -370,23 +366,26 @@ int eval_display(Env *env, Expr *expr, void **result) {
 
         e = expr_next(expr_child(expr));
         retval = eval(env, e, result);
-        printf("%s\n", (char *)*result);
+        printf("%s", (char *)*result);
         /* clean up result */
         if (retval == RETVAL_ATOM)
                 free(*result);
-        else if (retval == RETVAL_LAMBDA)
+        else if (retval == RETVAL_LAMBDA) {
                 lambda_check_remove((Lambda *)*result);
+                return RETVAL_ERROR;
+        }
         else
                 return RETVAL_ERROR;
-        *result = strdup("");
+        *result = strdup("\0");
         return RETVAL_ATOM;
 }
 
 int eval_load(Env *env, Expr *expr, void **result) {
-        char buf[INPUTMAX];
+        char buf[FILEINPUTMAX];
+        int fd;
         char *filename;
-        Expr *nextline;
-        FILE *fp;
+        void *fileaddr;
+        Expr *fileexpr;
         int retval;
 
         /* check return value - must be ATOM */
@@ -399,27 +398,35 @@ int eval_load(Env *env, Expr *expr, void **result) {
         }
         /* open file */
         filename = (char *)*result;
-        fp = fopen(filename, "r");
-        if (fp == NULL)
-                return RETVAL_ERROR;
+        fd = open(filename, O_RDONLY, 0);
         free(*result);
-        /* read each line -
-           fix this later so it doesn't read it 
-           line by line but all at once (?) */
-        while (fgets(buf, INPUTMAX, fp)) {
-		buf[strlen(buf)-1] = '\0';
-		nextline = parse(buf);
-		retval = eval(env, nextline, result);
-		expr_free(nextline);
-                /* clean up result */
-                if (retval == RETVAL_ATOM)
-                        free(*result);
-                else if (retval == RETVAL_LAMBDA)
-                        lambda_check_remove((Lambda *)*result);
-                else
-                        return RETVAL_ERROR;
+        if (fd < 0) {
+                fprintf(stderr, "error opening file\n");
+                return RETVAL_ERROR;
         }
-        fclose(fp);
+        /* get pointer to file */
+        fileaddr = mmap(NULL, FILEINPUTMAX, PROT_READ, MAP_SHARED, fd, 0);
+        close(fd);
+        if (fileaddr == NULL)
+                return RETVAL_ERROR;
+        /* copy file to buffer */
+        if (!memcpy(buf, fileaddr, FILEINPUTMAX))
+                return RETVAL_ERROR;
+        printf("%s\n", buf); // Something goes wrong when reading a multi-line expression
+        /* evaluate file stored in buffer */
+        fileexpr = parse(buf);
+        if (fileexpr == NULL)
+                return RETVAL_ERROR;
+        retval = eval(env, fileexpr, result);
+        expr_free(fileexpr);
+        /* clean up result */
+        if (retval == RETVAL_ATOM)
+                free(*result);
+        else if (retval == RETVAL_LAMBDA)
+                lambda_check_remove((Lambda *)*result);
+        else
+                return RETVAL_ERROR;
+        /* return value is an atom */
         *result = strdup("'done");
         return RETVAL_ATOM;
 }
@@ -441,11 +448,11 @@ int eval_if(Env *env, Expr *expr, void **result) {
                 free(*result);
         } else if (retval == RETVAL_LAMBDA) {
                 lambda_check_remove((Lambda *)*result);
-                boolean = 1;
+                boolean = 0;
         } else {
                 return RETVAL_ERROR;
         }
-        return boolean ? eval(env, true, result) : eval(env, false, result);
+        return (boolean) ? eval(env, true, result) : eval(env, false, result);
 }
 
 /* Evaluate lambda statement */

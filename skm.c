@@ -329,5 +329,7 @@ void bind_print(Bind *bind) {
 void lambda_print(Lambda *b) {
 	/* print the number of symbols binded to this 
 	 * lambda and its address in memory */
-	printf("[#proc %d (%p)]\n", b->bind_count, b);
+	printf("[#proc %d (%p)]", b->bind_count, b);
+        tree_print(b->param);
+        tree_print(b->body);
 }

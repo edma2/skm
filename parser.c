@@ -10,7 +10,7 @@
 #define STATE_END 		5
 #define STATE_ERROR 		6
 #define STATE_QUOTE             7
-#define MAX_WORD 		20
+#define MAX_WORD 		200
 #define TYPE_PROC 		0
 #define TYPE_ARG 		1
 
@@ -63,9 +63,9 @@ Expr *parse(char *exp) {
                                         state = STATE_PROC;
 			}
 		} else if (state == STATE_CLOSE_PAREN) {
-			if (layer <= 0) {
+			if (layer < 0) {
 				state = STATE_ERROR;
-				printf("error: mismatched parens\n");
+				printf("error: too many close parens\n");
 			} else if (*ptr == ')') {
 				/* go to next buf */
 				layer--;
@@ -117,17 +117,18 @@ Expr *parse(char *exp) {
                                 state = STATE_QUOTE;
                         }
 		} else if (state == STATE_QUOTE) {
-                        buf[i++] = *ptr;
                         if (*ptr == '\"')
                                 state = STATE_ARG;
+                        else
+                                buf[i++] = *ptr;
                 }
-		ptr++;
+                ptr++;
 	} while (*ptr != '\0' && state != STATE_ERROR);
 	/* not a function call, return value instead */
 	if (state != STATE_ERROR && state == STATE_BEGIN) {
 		tree_set_data(root, strdup(exp));
 	} else if (state != STATE_ERROR && layer > 0) {
-		printf("error: mismatched parens\n");
+		printf("error: too many open parens\n");
 		state = STATE_ERROR;
 	} 
 	if (state == STATE_ERROR) {

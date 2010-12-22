@@ -2,7 +2,7 @@
 #include "parser.h"
 
 int main(void) {
-        Expr *expr = parse("(print \"hello world\")");
+        Expr *expr = parse("(define foo 9) ");
         tree_print(expr);
         return 0;
 }
