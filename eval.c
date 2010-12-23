@@ -2,6 +2,7 @@
  * author: Eugene Ma (edma2) */
 
 /* TODO: 
+   error messages
    remove trailing zeroes */
 
 #define _GNU_SOURCE     // asprintf
@@ -89,12 +90,12 @@ int main(void) {
 			lambda_print(b);
 			/* remove lambda if we didn't bind it immediately */
                         lambda_check_remove(b);
-		} else if (retval == RETVAL_ERROR) {
-			printf("not supported yet");
                 }
 		expr_free(expr);
+                /* clean up environment */
 		env_sweep_frames(global);
-                printf("\n");
+                if (retval != RETVAL_ERROR)
+                        printf("\n");
 	}
         cleanup(global);
         printf("\n");
@@ -214,25 +215,31 @@ int is_quoted(char *atom) {
 int is_if(Expr *expr) {
 	if (expr == NULL)
 		return 0;
-	/* must consist of at least 3 atoms */
-	if (expr_len(expr) != 3)
-		return 0;
-	/* check the first word of the expression tree */
         if (!is_atom(expr_child(expr)))
                 return 0;
-	return (!strcmp(expr_get_word(expr_child(expr)), "if"));
+        if (strcmp(expr_get_word(expr_child(expr)), "if"))
+                return 0;
+	/* must consist of at least 3 atoms */
+	if (expr_len(expr) < 3) {
+                fprintf(stderr, "skm: wrong number of arguments\n");
+		return 0;
+        }
+        return 1;
 }
 
 int is_cond(Expr *expr) {
         if (expr == NULL)
                 return 0;
-        /* should have at least one condition */
-        if (expr_len(expr) < 2) {
-                return 0;
-        }
         if (!is_atom(expr_child(expr)))
                 return 0;
-        return (!strcmp(expr_get_word(expr_child(expr)), "cond"));
+        if (strcmp(expr_get_word(expr_child(expr)), "cond"))
+                return 0;
+        /* should have at least one condition */
+        if (expr_len(expr) < 2) {
+                fprintf(stderr, "skm: wrong number of arguments\n");
+                return 0;
+        }
+        return 1;
 }
 
 int is_load(Expr *expr) {
@@ -551,8 +558,10 @@ int apply_primitive(Lambda *prim, List *operands, void **result) {
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), "=")) {
-                if (list_size(operands) == 0)
+                if (list_size(operands) == 0) {
+                        fprintf(stderr, "skm: wrong number of arguments\n");
                         return RETVAL_ERROR;
+                }
                 /* get first argument */
                 first = (Operand *)list_first(operands)->data;
                 for (p = list_first(operands)->next; p; p = p->next) {
@@ -579,17 +588,19 @@ int apply_primitive(Lambda *prim, List *operands, void **result) {
                                 }
                         }
                 }
-                /* we've reached the end */
+                /* return true when there's no more arguments */
                 *result = strdup("#t");
                 return RETVAL_ATOM;
         } else if (!strcmp(prim_get(prim), ">") || !strcmp(prim_get(prim), "<") ||
                                !strcmp(prim_get(prim), ">=") || !strcmp(prim_get(prim), "<=")) {
-                if (list_size(operands) == 0)
+                if (list_size(operands) == 0) {
+                        fprintf(stderr, "skm: wrong number of arguments\n");
                         return RETVAL_ERROR;
+                }
                 /* get first argument */
                 first = (Operand *)list_first(operands)->data;
                 if (first->type != RETVAL_ATOM) {
-                        fprintf(stderr, ">: wrong type of argument\n");
+                        fprintf(stderr, "skm: wrong type of argument\n");
                         return RETVAL_ERROR;
                 }
                 /* compare everything to the first argument */
@@ -597,7 +608,7 @@ int apply_primitive(Lambda *prim, List *operands, void **result) {
                         comparable = (Operand *)p->data;
                         /* check type */
                         if (comparable->type != RETVAL_ATOM) {
-                                fprintf(stderr, ">: wrong type of argument\n");
+                                fprintf(stderr, "skm: wrong type of argument\n");
                                 return RETVAL_ERROR;
                         }
                         if (!strcmp(prim_get(prim), ">"))
@@ -729,7 +740,6 @@ List *eval_operands(Env *env, Expr *expr) {
 		}
 		list_append(operands, op);
 	}
-
 	return operands;
 }
 
