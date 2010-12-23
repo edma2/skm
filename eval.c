@@ -1,6 +1,9 @@
 /* skm - scheme interpreter
  * author: Eugene Ma (edma2) */
 
+/* TODO: 
+   remove trailing zeroes */
+
 #define _GNU_SOURCE     // asprintf
 #include <ctype.h>
 #include <sys/mman.h>
@@ -19,11 +22,10 @@ typedef struct {
 int eval(Env *env, Expr *expr, void **result);
 int apply(Lambda *op, List *operands, void **result);
 int eval_lambda(Env *env, Expr *expr, void **result);
-int eval_begin(Env *env, Expr *expr, void **result);
 int eval_define(Env *env, Expr *expr, void **result);
 int eval_if(Env *env, Expr *expr, void **result);
+int eval_cond(Env *env, Expr *expr, void **result);
 int eval_load(Env *env, Expr *expr, void **result);
-int eval_display(Env *env, Expr *expr, void **result);
 int is_atom(Expr *expr);
 int is_list(Expr *expr);
 int is_emptylist(Expr *expr);
@@ -35,15 +37,16 @@ int is_load(Expr *expr);
 int is_display(Expr *expr);
 int is_begin(Expr *expr);
 int is_if(Expr *expr);
+int is_cond(Expr *expr);
 int is_prim(Lambda *b);
 
 int apply_primitive(Lambda *prim, List *operands, void **result);
 Env *env_setup_call(Lambda *op, List *operands);
 Bind *lookup(Env *env, char *symbol);
-Lambda *get_operator(Env *env, Expr *expr);
+Lambda *eval_operator(Env *env, Expr *expr);
 void op_free(Operand *op);
 void cleanup(Env *env);
-List *get_operands(Env *env, Expr *expr);
+List *eval_operands(Env *env, Expr *expr);
 Operand *op_new(void *value, int type);
 
 static void init_primitives(Env *env);
@@ -62,12 +65,10 @@ int main(void) {
 	global = env_new();
 	if (global == NULL)
 		return -1;
-        printf("Welcome to skm (C-d to quit)\n");
 	init_primitives(global);
-        printf("Initialized built-in primitives.\n");
 	while (1) {
 		/* display useful information and prompt */
-		printf("\nskm> ");
+		printf("skm> ");
 		/* get input */
 		if (fgets(buf, INPUTMAX, stdin) == NULL)
 			break;
@@ -78,7 +79,6 @@ int main(void) {
 			expr_free(expr);
 			continue;
 		}
-                tree_print(expr);
 		retval = eval(global, expr, &result);
 		/* check return value and print output */
 		if (retval == RETVAL_ATOM) {
@@ -94,6 +94,7 @@ int main(void) {
                 }
 		expr_free(expr);
 		env_sweep_frames(global);
+                printf("\n");
 	}
         cleanup(global);
         printf("\n");
@@ -130,24 +131,22 @@ int eval(Env *env, Expr *expr, void **result) {
 		}
 	} else {
                 /* special forms */
-                if (is_begin(expr)) {
-                        return eval_begin(env, expr, result);
-                } else if (is_display(expr)) {
-                        return eval_display(env, expr, result);
-                } else if (is_define(expr)) {
+                if (is_define(expr)) {
 			return eval_define(env, expr, result);
 		} else if (is_lambda(expr)) {
 			return eval_lambda(env, expr, result);
                 } else if (is_if(expr)) {
                         return eval_if(env, expr, result);
+                } else if (is_cond(expr)) {
+                        return eval_cond(env, expr, result);
                 } else if (is_load(expr)) {
                         return eval_load(env, expr, result);
 		} else {
                         /* application */
-			proc = get_operator(env, expr);
+			proc = eval_operator(env, expr);
 			if (proc == NULL)
 				return RETVAL_ERROR;
-			operands = get_operands(env, expr);
+			operands = eval_operands(env, expr);
 			if (operands == NULL)
 				return RETVAL_ERROR;
 			retval = apply(proc, operands, result);
@@ -194,6 +193,7 @@ int is_num(char *atom) {
 		if (*atom == '.') {
 			if (++decimalcount > 1)
 				break;
+                        /* TODO: remove trailing zeroes */
 		} else if (!isdigit(*atom)) {
 			break;
 		}
@@ -206,19 +206,16 @@ int is_num(char *atom) {
 int is_quoted(char *atom) {
 	if (atom == NULL)
 		return 0;
-	if (*atom == '\'')
+	if (*atom == '\'' || *atom == '\"')
                 return 1;
-        if (*atom == '\"') {
-                return 1;
-        }
         return 0;
 }
 
 int is_if(Expr *expr) {
 	if (expr == NULL)
 		return 0;
-	/* must consist of at least 4 atoms */
-	if (expr_len(expr) != 4)
+	/* must consist of at least 3 atoms */
+	if (expr_len(expr) != 3)
 		return 0;
 	/* check the first word of the expression tree */
         if (!is_atom(expr_child(expr)))
@@ -226,11 +223,16 @@ int is_if(Expr *expr) {
 	return (!strcmp(expr_get_word(expr_child(expr)), "if"));
 }
 
-int is_begin(Expr *expr) {
+int is_cond(Expr *expr) {
         if (expr == NULL)
                 return 0;
-        if (!is_atom(expr_child(expr)));
-	return (!strcmp(expr_get_word(expr_child(expr)), "begin"));
+        /* should have at least one condition */
+        if (expr_len(expr) < 2) {
+                return 0;
+        }
+        if (!is_atom(expr_child(expr)))
+                return 0;
+        return (!strcmp(expr_get_word(expr_child(expr)), "cond"));
 }
 
 int is_load(Expr *expr) {
@@ -243,18 +245,6 @@ int is_load(Expr *expr) {
         if (!is_atom(expr_child(expr)))
                 return 0;
 	return (!strcmp(expr_get_word(expr_child(expr)), "load"));
-}
-
-int is_display(Expr *expr) {
-	if (expr == NULL)
-		return 0;
-	/* must consist of at least 3 symbols */
-	if (expr_len(expr) != 2)
-		return 0;
-	/* check the first word of the expression tree */
-        if (!is_atom(expr_child(expr)))
-                return 0;
-	return (!strcmp(expr_get_word(expr_child(expr)), "display"));
 }
 
 /* Return non-zero if the expression is a define evaluation */
@@ -304,11 +294,18 @@ static char *prim_get(Lambda *proc) {
 static void init_primitives(Env *env) {
 	if (env == NULL)
 		return;
-	prim_add(env, "#prim_add");
-	prim_add(env, "#prim_mult");
-	prim_add(env, "#prim_div");
-	prim_add(env, "#prim_sub");
-	prim_add(env, "#prim_eq");
+	prim_add(env, "+");
+	prim_add(env, "*");
+	prim_add(env, "/");
+	prim_add(env, "-");
+	prim_add(env, "=");
+	prim_add(env, ">");
+	prim_add(env, "<");
+	prim_add(env, "<=");
+	prim_add(env, ">=");
+	prim_add(env, "begin");
+	prim_add(env, "display");
+	prim_add(env, "newline");
 	/* please add a few more... */
 }
 
@@ -338,46 +335,6 @@ static void prim_add(Env *env, char *ident) {
 		bind_free(bind);
 		return;
 	}
-}
-
-int eval_begin(Env *env, Expr *expr, void **result) {
-        int retval;
-        Expr *last;
-
-        /* start from the first expression */
-        for (last = expr_next(expr_child(expr)); last; last = expr_next(last)) {
-                retval = eval(env, last, result);
-                if (!expr_next(last))
-                        break;
-                /* clean up result */
-                if (retval == RETVAL_ATOM)
-                        free(*result);
-                else if (retval == RETVAL_LAMBDA)
-                        lambda_check_remove((Lambda *)*result);
-                else
-                        return RETVAL_ERROR;
-        }
-        return retval;
-}
-
-int eval_display(Env *env, Expr *expr, void **result) {
-        int retval;
-        Expr *e;
-
-        e = expr_next(expr_child(expr));
-        retval = eval(env, e, result);
-        printf("%s", (char *)*result);
-        /* clean up result */
-        if (retval == RETVAL_ATOM)
-                free(*result);
-        else if (retval == RETVAL_LAMBDA) {
-                lambda_check_remove((Lambda *)*result);
-                return RETVAL_ERROR;
-        }
-        else
-                return RETVAL_ERROR;
-        *result = strdup("\0");
-        return RETVAL_ATOM;
 }
 
 int eval_load(Env *env, Expr *expr, void **result) {
@@ -412,7 +369,6 @@ int eval_load(Env *env, Expr *expr, void **result) {
         /* copy file to buffer */
         if (!memcpy(buf, fileaddr, FILEINPUTMAX))
                 return RETVAL_ERROR;
-        printf("%s\n", buf); // Something goes wrong when reading a multi-line expression
         /* evaluate file stored in buffer */
         fileexpr = parse(buf);
         if (fileexpr == NULL)
@@ -452,7 +408,58 @@ int eval_if(Env *env, Expr *expr, void **result) {
         } else {
                 return RETVAL_ERROR;
         }
-        return (boolean) ? eval(env, true, result) : eval(env, false, result);
+        /* false statement is optional */
+        if (boolean) {
+                return eval(env, true, result);
+        } else {
+                if (false == NULL) {
+                        *result = strdup("\0");
+                        return RETVAL_ATOM;
+                }
+                return eval(env, false, result);
+        }
+}
+
+int eval_cond(Env *env, Expr *expr, void **result) {
+        Expr *clause, *predicate, *true;
+        int retval;
+
+        /* find the right clause to evaluate */
+        for (clause = expr_next(expr_child(expr)); clause; clause = expr_next(clause)) {
+                if (expr_len(clause) != 2) {
+                        fprintf(stderr, "cond: wrong expression format\n");
+                        return RETVAL_ERROR;
+                }
+                predicate = expr_child(clause);
+                /* skip if "else" */
+                if (is_atom(predicate) && !strcmp(expr_get_word(predicate), "else")) { 
+                        if (expr_next(clause)) {
+                                fprintf(stderr, "cond: misplaced else clause\n");
+                                return RETVAL_ERROR;
+                        }
+                        break;
+                }
+                /* evaluate predicate */
+                retval = eval(env, predicate, result);
+                /* check and cleanup returned values */
+                if (retval == RETVAL_ATOM) {
+                        /* break out of loop if it doesn't equal #f */
+                        if (strcmp((char *)*result, "#f")) {
+                                free(*result);
+                                break;
+                        }
+                        free(*result);
+                } else if (retval == RETVAL_LAMBDA) {
+                        /* break out of loop is lambda */
+                        lambda_check_remove((Lambda *)*result);
+                        break;
+                } else {
+                        return RETVAL_ERROR;
+                }
+        }
+        true = expr_next(expr_child(clause));
+        retval = eval(env, true, result);
+        return retval;
 }
 
 /* Evaluate lambda statement */
@@ -513,69 +520,121 @@ int apply(Lambda *op, List *operands, void **result) {
 int apply_primitive(Lambda *prim, List *operands, void **result) {
         Node *p;
 	float f = 0;
-        Operand *comparable1, *comparable2;
+        int boolean;
+        Operand *comparable;
+        Operand *first, *last;
 
         /* basic arithmetic */
-        if (!strcmp(prim_get(prim), "#prim_add")) {
+        if (!strcmp(prim_get(prim), "+")) {
                 for (p = list_first(operands); p; p = p->next)
                         f += atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
-        } else if (!strcmp(prim_get(prim), "#prim_sub")) {
+        } else if (!strcmp(prim_get(prim), "-")) {
                 p = list_first(operands);
                 f = atof(((Operand *)p->data)->value);
                 for (p = p->next; p; p = p->next)
                         f -= atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
-        } else if (!strcmp(prim_get(prim), "#prim_mult")) {
+        } else if (!strcmp(prim_get(prim), "*")) {
                 f = 1;
                 for (p = list_first(operands); p; p = p->next)
                         f *= atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
-        } else if (!strcmp(prim_get(prim), "#prim_div")) {
+        } else if (!strcmp(prim_get(prim), "/")) {
                 p = list_first(operands);
                 f = atof(((Operand *)p->data)->value);
                 for (p = p->next; p; p = p->next)
                         f /= atof(((Operand *)p->data)->value);
                 asprintf((char **)result, "%f", f);
                 return RETVAL_ATOM;
-        } else if (!strcmp(prim_get(prim), "#prim_eq")) {
-                for (p = list_first(operands); p; p = p->next) {
-                        if (p->next == NULL) {
-                                *result = strdup("#t");
-                                return RETVAL_ATOM;
-                        }
-                        comparable1 = (Operand *)p->data;
-                        comparable2 = (Operand *)p->next->data;
+        } else if (!strcmp(prim_get(prim), "=")) {
+                if (list_size(operands) == 0)
+                        return RETVAL_ERROR;
+                /* get first argument */
+                first = (Operand *)list_first(operands)->data;
+                for (p = list_first(operands)->next; p; p = p->next) {
+                        comparable = (Operand *)p->data;
                         /* must match types */
-                        if (comparable1->type == RETVAL_LAMBDA) {
-                                if (comparable2->type != RETVAL_LAMBDA) {
-                                        *result = strdup("#f");
-                                        return RETVAL_ATOM;
-                                } 
-                                /* if they are both lambdas then compare their address in memory */
-                                if (comparable1->value != comparable2->value) {
-                                        *result = strdup("#f");
-                                        return RETVAL_ATOM;
-                                }
-                        } else if (is_num((char *)comparable1->value)) {
-                                if (!is_num((char *)comparable2->value)) {
+                        if (comparable->type != first->type) {
+                                *result = strdup("#f");
+                                return RETVAL_ATOM;
+                        } else if (first->type == RETVAL_LAMBDA) {
+                                /* compare lambda's addresses */
+                                if (first->value != comparable->value) {
                                         *result = strdup("#f");
                                         return RETVAL_ATOM;
                                 }
-                                if (atof((char *)comparable1->value) != atof((char *)comparable2->value)) {
+                        } else if (is_num((char *)first->value)) {
+                                if (atof((char *)first->value) != atof((char *)comparable->value)) {
                                         *result = strdup("#f");
                                         return RETVAL_ATOM;
                                 }
                         } else {
-                                if (strcmp((char *)comparable1->value, (char *)comparable2->value)) {
+                                if (strcmp((char *)first->value, (char *)comparable->value)) {
                                         *result = strdup("#f");
                                         return RETVAL_ATOM;
                                 }
                         }
                 }
+                /* we've reached the end */
+                *result = strdup("#t");
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), ">") || !strcmp(prim_get(prim), "<") ||
+                               !strcmp(prim_get(prim), ">=") || !strcmp(prim_get(prim), "<=")) {
+                if (list_size(operands) == 0)
+                        return RETVAL_ERROR;
+                /* get first argument */
+                first = (Operand *)list_first(operands)->data;
+                if (first->type != RETVAL_ATOM) {
+                        fprintf(stderr, ">: wrong type of argument\n");
+                        return RETVAL_ERROR;
+                }
+                /* compare everything to the first argument */
+                for (p = list_first(operands)->next; p; p = p->next) {
+                        comparable = (Operand *)p->data;
+                        /* check type */
+                        if (comparable->type != RETVAL_ATOM) {
+                                fprintf(stderr, ">: wrong type of argument\n");
+                                return RETVAL_ERROR;
+                        }
+                        if (!strcmp(prim_get(prim), ">"))
+                                boolean = atof((char *)first->value) > atof((char *)comparable->value);
+                        else if (!strcmp(prim_get(prim), ">="))
+                                boolean = atof((char *)first->value) >= atof((char *)comparable->value);
+                        else if (!strcmp(prim_get(prim), "<"))
+                                boolean = atof((char *)first->value) < atof((char *)comparable->value);
+                        else if (!strcmp(prim_get(prim), "<="))
+                                boolean = atof((char *)first->value) <= atof((char *)comparable->value);
+                        if (!boolean) {
+                                *result = strdup("#f");
+                                return RETVAL_ATOM;
+                        }
+                }
+                /* return true when there's no more arguments */
+                *result = strdup("#t");
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "begin")) {
+                if (list_size(operands) == 0)
+                        return RETVAL_ERROR;
+                last = (Operand *)list_last(operands)->data;
+                if (last->type == RETVAL_ATOM)
+                        *result = strdup((char *)last->value);
+                else if (last->type == RETVAL_LAMBDA)
+                        *result = (char *)last->value;
+                else
+                        return RETVAL_ERROR;
+                return last->type;
+        } else if (!strcmp(prim_get(prim), "display")) {
+                printf("%s", (char *)((Operand *)list_first(operands)->data)->value);
+                *result = strdup("\0");
+                return RETVAL_ATOM;
+        } else if (!strcmp(prim_get(prim), "newline")) {
+                printf("\n");
+                *result = strdup("\0");
+                return RETVAL_ATOM;
         }
         return RETVAL_ERROR;
 }
@@ -627,7 +686,7 @@ Env *env_setup_call(Lambda *op, List *operands) {
 
 /* Get operator of an expression, which will
  * always be the first atom in the expression */
-Lambda *get_operator(Env *env, Expr *expr) {
+Lambda *eval_operator(Env *env, Expr *expr) {
 	void *proc;
 	int retval;
 
@@ -639,7 +698,7 @@ Lambda *get_operator(Env *env, Expr *expr) {
 }
 
 /* Get the operands of an expression */
-List *get_operands(Env *env, Expr *expr) {
+List *eval_operands(Env *env, Expr *expr) {
 	List *operands;
 	Operand *op;
 	void *result;
